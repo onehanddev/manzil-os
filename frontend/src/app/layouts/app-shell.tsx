@@ -1,8 +1,7 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
-  Building,
   Building2,
   ChevronDown,
   HandCoins,
@@ -10,20 +9,18 @@ import {
   LogOut,
   MoreHorizontal,
   PiggyBank,
-  Receipt,
-  Settings,
-  Users,
   Wallet,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api/client'
 import { useMe } from '@/lib/api/hooks'
 import type { Society } from '@/lib/api/types'
 import { useAuthStore } from '@/stores/auth-store'
 import { useSocietyStore } from '@/stores/society-store'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Sheet,
@@ -46,20 +43,21 @@ type NavItem = {
   icon: typeof LayoutDashboard
 }
 
+/**
+ * Phase 0 nav — keep only pilot cashbook surfaces.
+ * Deferred to Phase 1: Billing, Members, Societies (multi-society), Settings.
+ * See PHASE_0_PRD.md "Out of Scope".
+ */
 const PRIMARY_NAV: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/billing', label: 'Billing', icon: Receipt },
   { to: '/receipts', label: 'Receipts', icon: HandCoins },
   { to: '/expenses', label: 'Expenses', icon: Wallet },
+  { to: '/reports', label: 'Reports', icon: BarChart3 },
 ]
 
 const MORE_NAV: NavItem[] = [
-  { to: '/members', label: 'Members', icon: Users },
   { to: '/flats', label: 'Flats', icon: Building2 },
   { to: '/funds', label: 'Funds', icon: PiggyBank },
-  { to: '/reports', label: 'Reports', icon: BarChart3 },
-  { to: '/societies', label: 'Societies', icon: Building },
-  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 function getInitials(name: string | undefined) {
@@ -79,22 +77,39 @@ export function AppShell() {
   const currentSocietyId = useSocietyStore((s) => s.currentSocietyId)
   const setCurrentSociety = useSocietyStore((s) => s.setCurrentSociety)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const societies = me?.memberships.map((m) => m.society) ?? []
   const current = societies.find((s) => s.id === currentSocietyId) ?? null
 
   // Auto-select the first society once memberships load.
+  // Phase 0 is single-society; keep auto-select for demo/mock but do not expose multi-society UI.
   useEffect(() => {
     if (!currentSocietyId && societies.length > 0) {
       setCurrentSociety(societies[0].id)
     }
   }, [currentSocietyId, societies, setCurrentSociety])
 
-  function handleLogout() {
-    void supabase?.auth.signOut()
+  const handleLogout = useCallback(async () => {
+    try {
+      if (supabase) await supabase.auth.signOut()
+    } catch {
+      // Supabase signOut can throw when no session exists — local logout must still succeed.
+    }
+    // Best-effort backend logout — skip for demo-token (no valid JWT) to avoid 401-triggered hard redirect.
+    const token = useAuthStore.getState().accessToken
+    if (token && token !== 'demo-token') {
+      try {
+        await api.post('/auth/logout')
+      } catch {
+        // ignore — local logout must succeed even if backend is unavailable
+      }
+    }
     clearAuth()
+    useSocietyStore.getState().setCurrentSociety(null)
+    queryClient.clear()
     navigate('/login', { replace: true })
-  }
+  }, [clearAuth, navigate, queryClient])
 
   return (
     <div className="min-h-dvh">
@@ -237,8 +252,16 @@ function SocietySwitcher({
   loading: boolean
   onChange: (id: string) => void
 }) {
-  const navigate = useNavigate()
-
+  if (loading) return <Skeleton className="h-4 w-24" />
+  // Phase 0 is single-society pilot; show name read-only.
+  // Keep lightweight switcher only when mock provides >1 society (demo).
+  if (societies.length <= 1) {
+    return (
+      <span className="max-w-32 truncate px-2 text-sm font-medium">
+        {current?.name ?? societies[0]?.name ?? 'Society'}
+      </span>
+    )
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -246,16 +269,10 @@ function SocietySwitcher({
           <Button variant="ghost" size="sm" className="gap-1 px-2 font-medium" />
         }
       >
-        {loading ? (
-          <Skeleton className="h-4 w-24" />
-        ) : (
-          <>
-            <span className="max-w-32 truncate">
-              {current?.name ?? 'Select society'}
-            </span>
-            <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-          </>
-        )}
+        <span className="max-w-32 truncate">
+          {current?.name ?? 'Select society'}
+        </span>
+        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
         <DropdownMenuLabel>Societies</DropdownMenuLabel>
@@ -266,13 +283,9 @@ function SocietySwitcher({
             className="justify-between"
           >
             {s.name}
-            {s.id === current?.id && <Badge variant="secondary">Active</Badge>}
+            {s.id === current?.id && <span className="text-xs text-muted-foreground">Active</span>}
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => navigate('/societies')}>
-          Manage societies
-        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -283,7 +296,7 @@ function UserMenu({
   onLogout,
 }: {
   name: string | undefined
-  onLogout: () => void
+  onLogout: () => void | Promise<void>
 }) {
   return (
     <DropdownMenu>

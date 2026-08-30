@@ -49,25 +49,26 @@ def test_alembic_migration_initializes_cleanly_on_empty_db():
         "flat_occupants",
         "opening_dues",
         "receipts",
+        "funds",
+        "vendors",
+        "expense_categories",
     ]:
         assert required in tables, f"missing required table {required}, got {tables}"
 
 
 def test_no_fund_charge_expense_tables(conn):
-    """Trimmed Phase 1 must NOT require fund/charge/expense tables to boot."""
+    """Phase 0 expanded slice: funds/vendors/expense_categories are required; charge tables still forbidden."""
     with conn.cursor() as cur:
         cur.execute(
             "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
         )
         tables = {r[0] for r in cur.fetchall()}
     for forbidden in [
-        "funds",
         "charge_types",
         "maintenance_rates",
         "charges",
         "payment_allocations",
         "fund_transactions",
-        "vendors",
         "expenses",
     ]:
         assert forbidden not in tables, f"forbidden table {forbidden} should not exist in trimmed schema"
