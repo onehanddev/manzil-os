@@ -1,1 +1,44 @@
 .DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/.venv/
+*.lock
+!backend/uv.lock
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/dev-dist/
+
+# Build / logs
+logs
+*.log
+*.local
+dist/
+build/
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
+
+# Cypress
+cypress/screenshots
+cypress/videos
+cypress/downloads
