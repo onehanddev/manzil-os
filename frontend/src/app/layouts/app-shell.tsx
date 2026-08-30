@@ -31,6 +31,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -275,7 +276,9 @@ function SocietySwitcher({
         <ChevronDown className="size-3.5 shrink-0 opacity-60" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuLabel>Societies</DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Societies</DropdownMenuLabel>
+        </DropdownMenuGroup>
         {societies.map((s) => (
           <DropdownMenuItem
             key={s.id}
@@ -310,9 +313,11 @@ function UserMenu({
         </Avatar>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel className="truncate">
-          {name ?? 'User'}
-        </DropdownMenuLabel>
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="truncate">
+            {name ?? 'User'}
+          </DropdownMenuLabel>
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onLogout} className="text-destructive">
           <LogOut className="size-4" />
