@@ -94,5 +94,11 @@ def require_admin(current=Depends(get_current_user)) -> dict:
     return current
 
 
+def require_active(current=Depends(get_current_user)) -> dict:
+    if not current.get("roles"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Pending approval")
+    return current
+
+
 def require_auth(current=Depends(get_current_user)) -> dict:
     return current

@@ -12,9 +12,15 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, require_admin
+from app.auth.deps import get_current_user
 from app.auth.security import normalize_mobile
-from app.auth.supabase_client import is_supabase_configured, supabase_create_user, supabase_sign_in
+from app.auth.supabase_client import (
+    is_supabase_configured,
+    supabase_send_otp,
+    supabase_set_password,
+    supabase_sign_in,
+    supabase_verify_otp,
+)
 from app.db import get_db
 
 router = APIRouter(tags=["auth"])
@@ -25,11 +31,18 @@ class LoginRequest(BaseModel):
     password: str
 
 
-class CreateStaffRequest(BaseModel):
+class OtpSendRequest(BaseModel):
     mobile: str
+
+
+class OtpVerifyRequest(BaseModel):
+    mobile: str
+    token: str
+    display_name: str | None = None
+
+
+class SetPasswordRequest(BaseModel):
     password: str
-    display_name: str
-    role: str = "COLLECTOR"
 
 
 def _get_roles_for_user(db: Session, user_id: str) -> tuple[str | None, list[str]]:
@@ -83,10 +96,142 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if row is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No local mapping")
     user_id = str(row[0])
+    # Allow login even if still PENDING (registration complete, awaiting admin approval)
+    # Check membership status – return token with status hint, deps will enforce ACTIVE for guarded routes
+    mem = db.execute(
+        text("SELECT status FROM society_memberships WHERE user_id=:uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": user_id},
+    ).fetchone()
+    if not mem:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No membership")
+    status_val = mem[0]
+    if status_val == "PENDING":
+        return {"access_token": supa["access_token"], "token_type": "bearer", "status": "pending"}
     society_id, roles = _get_roles_for_user(db, user_id)
     if not roles:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No active membership")
-    return {"access_token": supa["access_token"], "token_type": "bearer"}
+    return {"access_token": supa["access_token"], "token_type": "bearer", "status": "active"}
+
+
+@router.post("/auth/otp/send")
+def otp_send(payload: OtpSendRequest):
+    mobile = normalize_mobile(payload.mobile)
+    if not is_supabase_configured():
+        # In pure test OTP mode, allow without full Supabase config (mock)
+        from app.auth.supabase_client import supabase_send_otp as _send
+
+        otp = _send(mobile)
+        if otp == "123456":
+            return {"status": "sent", "otp": "123456"}
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase not configured")
+    otp = supabase_send_otp(mobile)
+    if otp is None:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send OTP")
+    if otp == "123456":
+        return {"status": "sent", "otp": "123456"}
+    return {"status": "sent"}
+
+
+@router.post("/auth/otp/verify")
+def otp_verify(payload: OtpVerifyRequest, db: Session = Depends(get_db)):
+    mobile = normalize_mobile(payload.mobile)
+    if not payload.token or not payload.token.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Token required")
+    result = supabase_verify_otp(mobile, payload.token.strip())
+    if not result or not result.get("access_token"):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP")
+    auth_id = None
+    user = result.get("user")
+    if user is not None:
+        auth_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    if not auth_id:
+        from app.auth.supabase_client import verify_supabase_jwt
+
+        pv = verify_supabase_jwt(result["access_token"])
+        auth_id = pv.get("sub") if pv else None
+    if not auth_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid OTP payload")
+    auth_id = str(auth_id)
+    # Find or create local user
+    row = db.execute(text("SELECT id FROM users WHERE auth_user_id=:a"), {"a": auth_id}).fetchone()
+    if row is None:
+        row2 = db.execute(text("SELECT id, auth_user_id FROM users WHERE mobile=:m"), {"m": mobile}).fetchone()
+        if row2:
+            # Link existing mobile row (e.g. seeded admin with no auth_id)
+            uid, existing_auth = row2
+            if not existing_auth:
+                db.execute(text("UPDATE users SET auth_user_id=:a WHERE id=:uid"), {"a": auth_id, "uid": str(uid)})
+                db.commit()
+            row = (uid,)
+        else:
+            # New registration - create user + membership
+            new_user_id = str(uuid.uuid4())
+            display_name = payload.display_name or mobile
+            db.execute(
+                text("INSERT INTO users (id, mobile, display_name, auth_user_id) VALUES (:id, :m, :d, :a)"),
+                {"id": new_user_id, "m": mobile, "d": display_name, "a": auth_id},
+            )
+            # Decide membership status: first user in system becomes ACTIVE SOCIETY_ADMIN, rest PENDING
+            society_id_row = db.execute(text("SELECT id FROM societies LIMIT 1")).fetchone()
+            society_id = str(society_id_row[0]) if society_id_row else None
+            if society_id:
+                # Check if any ACTIVE SOCIETY_ADMIN exists
+                admin_exists = db.execute(
+                    text(
+                        """
+                        SELECT 1 FROM society_memberships sm
+                        JOIN membership_roles mr ON mr.society_membership_id=sm.id
+                        JOIN roles r ON r.id=mr.role_id
+                        WHERE r.key='SOCIETY_ADMIN' AND sm.status='ACTIVE' LIMIT 1
+                        """
+                    )
+                ).fetchone()
+                if admin_exists is None:
+                    # Bootstrap first admin
+                    mem_id = str(uuid.uuid4())
+                    db.execute(
+                        text("INSERT INTO society_memberships (id, user_id, society_id, status) VALUES (:mid, :uid, :sid, 'ACTIVE')"),
+                        {"mid": mem_id, "uid": new_user_id, "sid": society_id},
+                    )
+                    role_row = db.execute(text("SELECT id FROM roles WHERE key='SOCIETY_ADMIN'")).fetchone()
+                    db.execute(
+                        text("INSERT INTO membership_roles (society_membership_id, role_id) VALUES (:mid, :rid)"),
+                        {"mid": mem_id, "rid": str(role_row[0])},
+                    )
+                    db.commit()
+                    return {"access_token": result["access_token"], "token_type": "bearer", "status": "active", "role": "SOCIETY_ADMIN"}
+                else:
+                    # Regular user pending approval
+                    mem_id = str(uuid.uuid4())
+                    db.execute(
+                        text("INSERT INTO society_memberships (id, user_id, society_id, status) VALUES (:mid, :uid, :sid, 'PENDING')"),
+                        {"mid": mem_id, "uid": new_user_id, "sid": society_id},
+                    )
+                    db.commit()
+                    return {"access_token": result["access_token"], "token_type": "bearer", "status": "pending"}
+            row = (new_user_id,)
+    # Existing user – just return token (approval check happens via deps on guarded routes)
+    # Determine status for response hint
+    uid = str(row[0])
+    mem = db.execute(
+        text("SELECT status FROM society_memberships WHERE user_id=:uid ORDER BY created_at DESC LIMIT 1"),
+        {"uid": uid},
+    ).fetchone()
+    status_val = mem[0] if mem else "active"
+    return {"access_token": result["access_token"], "token_type": "bearer", "status": status_val.lower()}
+
+
+@router.post("/auth/set-password")
+def set_password(payload: SetPasswordRequest, current=Depends(get_current_user)):
+    if not payload.password or len(payload.password) < 6:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password too short")
+    auth_id = current.get("auth_user_id")
+    if not auth_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No auth user linked")
+    ok = supabase_set_password(str(auth_id), payload.password)
+    if not ok:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to set password")
+    return {"status": "password_set"}
 
 
 @router.post("/auth/logout")
@@ -103,65 +248,3 @@ def get_me(current=Depends(get_current_user)):
         "roles": current["roles"],
         "society_id": current["society_id"],
     }
-
-
-@router.post("/api/admin/users")
-def create_staff(payload: CreateStaffRequest, db: Session = Depends(get_db), current=Depends(require_admin)):
-    if not is_supabase_configured():
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Supabase not configured")
-    if payload.role not in ("SOCIETY_ADMIN", "COLLECTOR"):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid role")
-    mobile = normalize_mobile(payload.mobile)
-    if not payload.password or len(payload.password) < 6:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password too short")
-    existing = db.execute(text("SELECT id FROM users WHERE mobile=:m"), {"m": mobile}).fetchone()
-    if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Mobile already registered")
-    auth_user_id = supabase_create_user(mobile, payload.password, payload.display_name)
-    if not auth_user_id:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Supabase create_user failed")
-    user_id = str(uuid.uuid4())
-    db.execute(
-        text("INSERT INTO users (id, mobile, display_name, auth_user_id) VALUES (:id, :mobile, :name, :aid)"),
-        {"id": user_id, "mobile": mobile, "name": payload.display_name, "aid": auth_user_id},
-    )
-    society_id = current["society_id"]
-    membership_id = str(uuid.uuid4())
-    db.execute(
-        text("INSERT INTO society_memberships (id, user_id, society_id, status) VALUES (:mid, :uid, :sid, 'ACTIVE')"),
-        {"mid": membership_id, "uid": user_id, "sid": society_id},
-    )
-    role_row = db.execute(text("SELECT id FROM roles WHERE key=:k"), {"k": payload.role}).fetchone()
-    if role_row is None:
-        raise HTTPException(status_code=500, detail="Role not found")
-    db.execute(
-        text("INSERT INTO membership_roles (society_membership_id, role_id) VALUES (:mid, :rid)"),
-        {"mid": membership_id, "rid": str(role_row[0])},
-    )
-    db.commit()
-    return {"id": user_id, "mobile": mobile, "role": payload.role, "auth_user_id": auth_user_id}
-
-
-@router.get("/api/flats")
-def list_flats(current=Depends(get_current_user)):
-    return {"flats": [], "user_roles": current["roles"]}
-
-
-@router.post("/api/flats")
-def create_flat(payload: dict, db: Session = Depends(get_db), current=Depends(require_admin)):
-    return {"status": "created", "by": current["user_id"]}
-
-
-@router.post("/api/receipts")
-def create_receipt(payload: dict, current=Depends(get_current_user)):
-    return {"status": "receipt created", "by": current["user_id"], "roles": current["roles"]}
-
-
-@router.post("/api/opening-dues")
-def create_opening_due(payload: dict, current=Depends(require_admin)):
-    return {"status": "opening due created"}
-
-
-@router.get("/api/admin/stats")
-def admin_stats(current=Depends(require_admin)):
-    return {"stats": "ok", "for": current["user_id"]}

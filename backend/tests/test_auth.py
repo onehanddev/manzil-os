@@ -111,6 +111,7 @@ def _supabase_env_and_mock(monkeypatch):
                 _auth_id_to_mobile[auth_id] = "+919000000000"
 
     # Mock Supabase helpers
+    import app.admin.router as admin_router_mod
     import app.auth.router as router_mod
     import app.auth.supabase_client as sc_mod
 
@@ -142,8 +143,9 @@ def _supabase_env_and_mock(monkeypatch):
         )
         return {"access_token": token, "user": {"id": auth_id}}
 
-    monkeypatch.setattr(router_mod, "supabase_create_user", _mock_create_user)
+    # auth router handles login (password), admin router handles create_user
     monkeypatch.setattr(router_mod, "supabase_sign_in", _mock_sign_in)
+    monkeypatch.setattr(admin_router_mod, "supabase_create_user", _mock_create_user)
     monkeypatch.setattr(sc_mod, "supabase_create_user", _mock_create_user)
     monkeypatch.setattr(sc_mod, "supabase_sign_in", _mock_sign_in)
 

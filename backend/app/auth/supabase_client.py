@@ -92,6 +92,133 @@ def verify_supabase_jwt(token: str) -> dict | None:
         return None
 
 
+def _is_test_otp_mode() -> bool:
+    val = _get_env("SUPABASE_TEST_OTP")
+    if val and val.strip().lower() in ("1", "true", "yes"):
+        return True
+    # also allow explicit test env for CI without real Twilio
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        # When running pytest without real Supabase keys, treat as test OTP unless live flag set
+        if _get_env("SUPABASE_TEST_OTP") != "0":
+            return True
+    return False
+
+
+def supabase_send_otp(mobile: str) -> str | None:
+    """Send OTP via Supabase. In test mode returns 123456 without SMS cost."""
+    if _is_test_otp_mode():
+        return "123456"
+    client = get_supabase_client(service_role=False)
+    if client is None:
+        return None
+    try:
+        # Supabase phone OTP - shouldCreateUser true for registration flow
+        client.auth.sign_in_with_otp({"phone": mobile})
+        return "sent"
+    except Exception:
+        return None
+
+
+def supabase_verify_otp(mobile: str, token: str) -> dict | None:
+    """Verify OTP via Supabase. In test mode checks 123456 and mints a JWT (real Supabase user if configured)."""
+    if _is_test_otp_mode():
+        if token != "123456":
+            return None
+        secret = get_supabase_jwt_secret()
+        if not secret:
+            return None
+        import jwt as pyjwt
+        import uuid
+
+        # If real Supabase is configured, create the user there so it appears in dashboard
+        # This is the cheap test path: 123456 bypasses SMS but still writes to auth.users
+        auth_id = None
+        if is_supabase_configured():
+            try:
+                client = get_supabase_client(service_role=True)
+                if client is not None:
+                    synthetic_email = f"{mobile.replace('+', '')}@manzil.local"
+                    try:
+                        resp = client.auth.admin.create_user(
+                            {
+                                "phone": mobile,
+                                "email": synthetic_email,
+                                "phone_confirm": True,
+                                "email_confirm": True,
+                                "user_metadata": {"mobile": mobile},
+                            }
+                        )
+                        u = getattr(resp, "user", None) or (resp.get("user") if isinstance(resp, dict) else None)
+                        if u is not None:
+                            auth_id = getattr(u, "id", None) if not isinstance(u, dict) else u.get("id")
+                            if auth_id:
+                                auth_id = str(auth_id)
+                    except Exception as e:
+                        # Already exists -> try to find existing by phone
+                        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                            try:
+                                listed = client.auth.admin.list_users()
+                                users = getattr(listed, "users", None) or (listed.get("users") if isinstance(listed, dict) else None)
+                                if users:
+                                    for u in users:
+                                        phone = getattr(u, "phone", None) if not isinstance(u, dict) else u.get("phone")
+                                        if phone == mobile:
+                                            auth_id = str(getattr(u, "id", None) if not isinstance(u, dict) else u.get("id"))
+                                            break
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+        if not auth_id:
+            # Fallback to deterministic id for offline CI (fake https://test.supabase.co)
+            auth_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, mobile))
+        jwt_token = pyjwt.encode(
+            {"sub": auth_id, "phone": mobile, "aud": "authenticated", "exp": 9999999999},
+            secret,
+            algorithm="HS256",
+        )
+        return {"access_token": jwt_token, "user": {"id": auth_id, "phone": mobile}}
+    client = get_supabase_client(service_role=False)
+    if client is None:
+        return None
+    try:
+        resp = client.auth.verify_otp({"phone": mobile, "token": token, "type": "sms"})
+        session = getattr(resp, "session", None) or (resp.get("session") if isinstance(resp, dict) else None)
+        user = getattr(resp, "user", None) or (resp.get("user") if isinstance(resp, dict) else None)
+        if session and getattr(session, "access_token", None):
+            return {"access_token": session.access_token, "user": user}
+        return None
+    except Exception:
+        return None
+
+
+# Test-only in-memory password store for SUPABASE_TEST_OTP mode (so set-password + sign-in work offline)
+_test_password_store: dict[str, str] = {}  # auth_user_id or mobile -> password
+
+
+def supabase_set_password(auth_user_id: str, password: str) -> bool:
+    """Set password for Supabase user. In test mode stores in memory + tries real Supabase if configured."""
+    if _is_test_otp_mode():
+        _test_password_store[auth_user_id] = password
+        # If real Supabase is configured, also persist there so dashboard shows it
+        if is_supabase_configured():
+            try:
+                client = get_supabase_client(service_role=True)
+                if client is not None:
+                    client.auth.admin.update_user_by_id(auth_user_id, {"password": password})
+            except Exception:
+                pass
+        return True
+    client = get_supabase_client(service_role=True)
+    if client is None:
+        return False
+    try:
+        client.auth.admin.update_user_by_id(auth_user_id, {"password": password})
+        return True
+    except Exception:
+        return False
+
+
 def supabase_create_user(mobile: str, password: str, display_name: str) -> str | None:
     """Create user in Supabase auth via service role, return auth_user_id or None."""
     client = get_supabase_client(service_role=True)
@@ -128,6 +255,32 @@ def supabase_create_user(mobile: str, password: str, display_name: str) -> str |
 
 def supabase_sign_in(mobile: str, password: str) -> dict | None:
     """Attempt Supabase sign-in with phone/password, return session dict or None."""
+    if _is_test_otp_mode():
+        import jwt as pyjwt
+        import uuid
+
+        auth_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, mobile))
+        # Check test password store (set via supabase_set_password) or fallback to deterministic check
+        stored = _test_password_store.get(auth_id) or _test_password_store.get(mobile)
+        if stored is not None:
+            if stored != password:
+                return None
+        else:
+            # If no password ever set via set-password, allow none? For backward compat with test_auth mock, fallback to real client path
+            # Try real client if not in test store, but we are in test mode without real Supabase, so return None
+            # However test_auth's mock will intercept before this, so we return None here to let mock handle admin case
+            # For OTP-registered users who just set password, stored will be present
+            return None
+        secret = get_supabase_jwt_secret()
+        if not secret:
+            return None
+        token = pyjwt.encode(
+            {"sub": auth_id, "phone": mobile, "aud": "authenticated", "exp": 9999999999},
+            secret,
+            algorithm="HS256",
+        )
+        return {"access_token": token, "user": {"id": auth_id}}
+
     client = get_supabase_client(service_role=False)
     if client is None:
         return None
