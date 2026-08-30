@@ -401,11 +401,12 @@ wheels = [
 [[package]]
 name = "manzil-os"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pyjwt" },
     { name = "sqlalchemy" },
     { name = "supabase" },
     { name = "uvicorn" },
@@ -413,6 +414,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -421,13 +423,17 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.19.1" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
+    { name = "pyjwt", specifier = ">=2.8" },
     { name = "sqlalchemy", specifier = ">=2.0.52" },
     { name = "supabase", specifier = ">=2.31.0" },
     { name = "uvicorn", specifier = ">=0.52.3" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=9.1.1" }]
+dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
 
 [[package]]
 name = "markupsafe"

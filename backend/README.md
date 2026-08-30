@@ -1,5 +1,24 @@
 # Manzil OS Backend
 
+## Quick Start (minimal `uv` commands)
+
+```bash
+# from backend/ — starts FastAPI with reload on http://127.0.0.1:8000
+uv run dev
+# alternatives:
+uv run python -m app          # same (uses backend/app/__main__.py:10)
+PORT=8001 uv run dev          # custom port
+uv run dev --port 8001        # also works (forwarded to uvicorn)
+
+# verify
+curl http://127.0.0.1:8000/health  # -> {"status":"ok","db":"ok"}
+curl http://127.0.0.1:8000/docs
+```
+
+Backend port is **not** in `backend/.env` — `backend/app/__main__.py:10` reads `$PORT` else `8000` (uvicorn default). Frontend port is `frontend/vite.config.ts:57` (`5173`) with `frontend/.env:3` `VITE_API_URL=/api`.
+
+If you saw `ASGI/SGI` or `Router.__init__() got unexpected keyword argument 'on_startup'` errors, it was from running `uvicorn app.main` (missing `:app`) or global `fastapi==0.115` instead of the venv's `0.141.1`. Always use `uv run` from `backend/`.
+
 ## Database: Test vs. Main vs. Production
 
 You are correct about the current setup:
