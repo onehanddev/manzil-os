@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import get_database_url
+from app.models import Base  # noqa: F401 – re-exported so alembic/env can import from here
 
 # Engine is created lazily but cached at module level – importing this
 # module does not open a connection, only configures SQLAlchemy.
@@ -55,4 +56,4 @@ def get_db():
         db.close()
 
 
-__all__ = ["SessionLocal", "get_db", "get_engine"]
+__all__ = ["Base", "SessionLocal", "get_db", "get_engine"]

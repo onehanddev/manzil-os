@@ -19,16 +19,23 @@ Mobile-first PWA for society management (React + TypeScript + Vite).
 
 ```bash
 npm install
-cp .env.example .env   # fill in Supabase keys when ready
+cp .env.example .env   # already points to local Supabase (http://127.0.0.1:54321)
 npm run dev            # http://localhost:5173
 ```
 
-The repo ships with a local `.env` that enables `VITE_MOCK_API=true`, so the
-app runs against mock data with **demo mode** login — no backend or Supabase
-needed. Click "Continue in demo mode" on the login screen.
+The repo ships with `frontend/.env` pointing to **local Supabase** (see
+`supabase/config.toml` [auth.sms.test_otp] — OTP is always `123456`, no Twilio
+needed). Run `npx supabase start` then `bash scripts/sync-supabase-env.sh` to
+sync keys into `.env`.
 
-To use real auth, set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in
-`.env` and turn off `VITE_MOCK_API`.
+- **Demo mode:** if `VITE_SUPABASE_URL` is empty, the login screen offers
+  "Continue in demo mode" (MSW mocks, no backend).
+- **Local Supabase:** `VITE_SUPABASE_URL=http://127.0.0.1:54321` with the anon key
+  from `npx supabase status -o env`. Use any phone in the test_otp list, e.g.
+  `+919000000000` / `123456`.
+- **Hosted Supabase:** copy keys from the cloud dashboard into `.env` instead.
+
+To toggle offline mocks explicitly, set `VITE_MOCK_API=true/false` in `.env`.
 
 ## Scripts
 

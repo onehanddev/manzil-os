@@ -41,6 +41,50 @@ All three are the **same schema** — Alembic guarantees they stay in sync.
 
 ## Complete workflow
 
+### 0. Local Supabase Auth (no Twilio needed)
+
+Hosted Supabase needs Twilio for SMS OTP. For local dev we run Supabase locally
+with deterministic test OTPs (`123456`) — no provider signup required.
+
+`supabase/config.toml` already enables `auth.sms.test_otp` for 10 dev numbers
+(`+919000000000`, `919000000100`, etc.) and a dummy Twilio provider so phone
+login is not disabled. The local stack runs on:
+
+- API/Kong: `http://127.0.0.1:54321`
+- Studio: `http://127.0.0.1:54323`
+- DB: `postgresql://postgres:postgres@127.0.0.1:54322/postgres`
+
+```bash
+# once: install CLI (already in devDependencies via npx)
+npx supabase --version
+
+# start local stack (first run pulls ~1.5GB of images)
+npx supabase start
+npx supabase status -o env   # shows ANON_KEY, SERVICE_ROLE_KEY, JWT_SECRET, etc.
+
+# sync keys into backend/.env + frontend/.env (or copy manually from status)
+bash scripts/sync-supabase-env.sh
+
+# verify OTP works (should return message_id test-otp)
+curl -s -X POST "http://127.0.0.1:54321/auth/v1/otp" \
+  -H "apikey: $ANON_KEY" -H "Content-Type: application/json" \
+  -d '{"phone":"+919000000000"}' | cat
+
+# stop when done (keep with --no-backup if you want to wipe)
+npx supabase stop
+npx supabase stop --no-backup  # full reset
+```
+
+`scripts/sync-supabase-env.sh` rewrites `SUPABASE_URL=http://127.0.0.1:54321`
+and the anon/service keys in both `.env` files. Backups are saved as
+`*.bak.<timestamp>`. Backend JWT verification in `backend/app/auth/supabase_client.py:80`
+now handles both HS256 (hosted) and ES256 via JWKS (local), so the same code works
+in either env.
+
+> Any phone listed under `[auth.sms.test_otp]` in `supabase/config.toml` always
+> verifies with `123456`. Uncategorized phones will attempt real Twilio (dummy
+> creds → will fail), so stick to the listed numbers for dev.
+
 ### 1. Local dev (you are here)
 
 `backend/.env` now points to **local** `manzil_os` so `alembic` works out of the box (previously it pointed at the dead Supabase URL, hence `FATAL: tenant/user ... not found`).

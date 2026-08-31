@@ -50,7 +50,8 @@ def get_supabase_jwt_secret() -> str | None:
 
 
 def is_supabase_configured() -> bool:
-    return bool(get_supabase_url() and get_supabase_jwt_secret())
+    # Local Supabase uses ES256 via JWKS (no HS256 secret verification needed); check for URL + any key
+    return bool(get_supabase_url() and (get_supabase_jwt_secret() or _get_env("SUPABASE_ANON_KEY") or _get_env("SUPABASE_SERVICE_ROLE_KEY")))
 
 
 def get_supabase_client(service_role: bool = False):
@@ -77,19 +78,106 @@ def get_supabase_client(service_role: bool = False):
         return None
 
 
+_jwks_cache: dict[str, dict] = {}
+
+
+def _get_jwks(supabase_url: str) -> dict | None:
+    """Fetch and cache JWKS from Supabase Auth. Returns dict kid -> JWK."""
+    if supabase_url in _jwks_cache:
+        return _jwks_cache[supabase_url]
+    try:
+        import urllib.request
+        import json
+
+        url = supabase_url.rstrip("/") + "/auth/v1/.well-known/jwks.json"
+        with urllib.request.urlopen(url, timeout=2) as resp:
+            data = json.loads(resp.read().decode())
+            cache = {k.get("kid"): k for k in data.get("keys", []) if k.get("kid")}
+            if cache:
+                _jwks_cache[supabase_url] = cache
+                return cache
+    except Exception:
+        pass
+    return None
+
+
 def verify_supabase_jwt(token: str) -> dict | None:
-    """Verify Supabase JWT using SUPABASE_JWT_SECRET via PyJWT."""
+    """Verify Supabase JWT.
+
+    Tries HS256 via SUPABASE_JWT_SECRET first (hosted), then ES256/RS256 via JWKS
+    from SUPABASE_URL (local Supabase uses ES256), and finally falls back to
+    GoTrue /auth/v1/user introspection if crypto fails.
+    """
+    # 1. Hosted path: HS256 with shared secret
     secret = get_supabase_jwt_secret()
-    if not secret:
+    if secret:
+        try:
+            import jwt as pyjwt
+
+            payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
+            return payload
+        except Exception:
+            pass
+
+    supabase_url = get_supabase_url()
+    if not supabase_url:
         return None
+
+    # 2. Local path: ES256/RS256 via JWKS
     try:
         import jwt as pyjwt
 
-        # Supabase JWTs are HS256 with aud=authenticated
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"verify_aud": False})
-        return payload
+        header = pyjwt.get_unverified_header(token)
+        kid = header.get("kid")
+        alg = header.get("alg", "ES256")
+        jwks = _get_jwks(supabase_url)
+        if jwks and kid and kid in jwks:
+            jwk = jwks[kid]
+            # Convert JWK to PEM public key
+            public_key = pyjwt.algorithms.ECAlgorithm.from_jwk(jwk) if alg.startswith("ES") else pyjwt.algorithms.RSAAlgorithm.from_jwk(jwk)
+            # For EC/RS, pyjwt expects the key object; also try string form
+            try:
+                payload = pyjwt.decode(token, public_key, algorithms=[alg], options={"verify_aud": False})
+                return payload
+            except Exception:
+                # Retry with JWK JSON string (some pyjwt versions need it)
+                import json
+
+                payload = pyjwt.decode(
+                    token, json.dumps(jwk), algorithms=[alg], options={"verify_aud": False}
+                )
+                return payload
+        # 2b. Try JWKS without kid matching (single key case)
+        if jwks and len(jwks) == 1:
+            jwk = next(iter(jwks.values()))
+            try:
+                public_key = pyjwt.algorithms.ECAlgorithm.from_jwk(jwk)
+                payload = pyjwt.decode(token, public_key, algorithms=[alg], options={"verify_aud": False})
+                return payload
+            except Exception:
+                pass
     except Exception:
-        return None
+        pass
+
+    # 3. Fallback: introspect via GoTrue user endpoint (works for any alg without local crypto)
+    try:
+        import urllib.request
+        import json
+
+        anon_key = _get_env("SUPABASE_ANON_KEY") or _get_env("SUPABASE_SERVICE_ROLE_KEY")
+        if anon_key:
+            url = supabase_url.rstrip("/") + "/auth/v1/user"
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "apikey": anon_key})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                user = json.loads(resp.read().decode())
+                # GoTrue returns user object with id -> sub
+                if isinstance(user, dict) and user.get("id"):
+                    # Build minimal payload compatible with backend deps
+                    return {"sub": user["id"], "phone": user.get("phone"), "aud": "authenticated", "user_metadata": user.get("user_metadata", {})}
+    except Exception:
+        pass
+
+    return None
 
 
 def _is_test_otp_mode() -> bool:

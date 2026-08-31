@@ -1,12 +1,55 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Loader2, Smartphone } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
+const API_BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+const AUTH_BASE = API_BASE.replace(/\/api$/, '')
+const hasSupabaseEnv = Boolean(
+  import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY,
+)
+
+type OtpVerifyResponse = {
+  access_token: string
+  token_type: string
+  status: 'active' | 'pending'
+}
+
+type MeResponse = {
+  user_id: string
+  mobile: string
+}
+
+async function postJson<T>(url: string, body: unknown, token?: string): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(data.detail ?? `Request failed (${response.status})`)
+  }
+  return (await response.json()) as T
+}
+
+async function getJson<T>(url: string, token: string): Promise<T> {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { detail?: string }
+    throw new Error(data.detail ?? `Request failed (${response.status})`)
+  }
+  return (await response.json()) as T
+}
 
 export function LoginPage() {
   const accessToken = useAuthStore((s) => s.accessToken)
@@ -21,7 +64,7 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const demoMode = !supabase
+  const demoMode = !hasSupabaseEnv
 
   if (accessToken) {
     return <Navigate to={from} replace />
@@ -38,18 +81,13 @@ export function LoginPage() {
   async function handleSendOtp(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (!supabase) {
+    if (demoMode) {
       enterDemo()
       return
     }
     setBusy(true)
     try {
-      const { error: sendError } = await supabase.auth.signInWithOtp({
-        phone,
-        // eslint-disable-next-line @typescript-eslint/naming-convention
-        options: { shouldCreateUser: true },
-      })
-      if (sendError) throw sendError
+      await postJson(`${AUTH_BASE}/auth/otp/send`, { mobile: phone })
       setStep('otp')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not send OTP')
@@ -61,26 +99,20 @@ export function LoginPage() {
   async function handleVerifyOtp(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (!supabase) return
+    if (demoMode) return
     setBusy(true)
     try {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone,
+      const session = await postJson<OtpVerifyResponse>(`${AUTH_BASE}/auth/otp/verify`, {
+        mobile: phone,
         token: otp,
-        type: 'sms',
       })
-      if (verifyError) throw verifyError
-      const session = data.session
-      if (!session) throw new Error('No session returned')
+      const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
       setAuth({
         accessToken: session.access_token,
         user: {
-          id: session.user.id,
-          displayName:
-            session.user.user_metadata.display_name ??
-            session.user.phone ??
-            'User',
-          mobile: session.user.phone ?? phone,
+          id: me.user_id,
+          displayName: me.mobile,
+          mobile: me.mobile,
         },
       })
       navigate(from, { replace: true })
@@ -124,22 +156,22 @@ export function LoginPage() {
                 {busy && <Loader2 className="animate-spin" />}
                 {demoMode ? 'Continue' : 'Send OTP'}
               </Button>
-              {demoMode && (
-                <>
+              <div className="space-y-2">
+                {demoMode && (
                   <p className="text-center text-xs text-muted-foreground">
                     Supabase is not configured — demo mode lets you explore the
                     app shell without a backend.
                   </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full"
-                    onClick={enterDemo}
-                  >
-                    Continue in demo mode
-                  </Button>
-                </>
-              )}
+                )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={enterDemo}
+                >
+                  Continue in demo mode
+                </Button>
+              </div>
             </form>
           ) : (
             <form onSubmit={handleVerifyOtp} className="space-y-4">
