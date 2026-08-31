@@ -279,7 +279,12 @@ export function FlatsPage() {
               {catLoading ? (
                 <p className="text-sm text-muted-foreground">Loading…</p>
               ) : categories.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No categories yet.</p>
+                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+                  <p className="text-sm font-medium">No categories yet</p>
+                  <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                    Create your first flat category above — the maintenance amount will prefill receipt amounts.
+                  </p>
+                </div>
               ) : (
                 categories.map((c) => (
                   <div key={c.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
@@ -345,8 +350,15 @@ export function FlatsPage() {
           <Card>
             <CardHeader><CardTitle className="text-sm">Flats — Current Due (advance = minus)</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              {flatLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : flats.length === 0 ? <p className="text-sm text-muted-foreground">No flats yet.</p> : flats.map((f) => {
-                const mAmt = f.maintenance_amount ?? f.category_maintenance_amount ?? f.flat_category?.maintenance_amount
+              {flatLoading ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : flats.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+                  <p className="text-sm font-medium">No flats yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Create a flat above — assign a category and occupants to track dues.</p>
+                </div>
+              ) : flats.map((f) => {
+                  const mAmt = f.maintenance_amount ?? f.category_maintenance_amount ?? f.flat_category?.maintenance_amount
                 const due = f.current_due ?? 0
                 const isAdvance = due < 0
                 return (
@@ -463,7 +475,12 @@ export function FlatsPage() {
           <Card>
             <CardHeader><CardTitle className="text-sm">Contacts</CardTitle></CardHeader>
             <CardContent className="space-y-2">
-              {persons.length === 0 ? <p className="text-sm text-muted-foreground">No contacts yet.</p> : persons.map((p) => (
+              {persons.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
+                  <p className="text-sm font-medium">No contacts yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Add an owner or tenant above to assign them to a flat.</p>
+                </div>
+              ) : persons.map((p) => (
                 <div key={p.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
                   <div>
                     <div className="text-sm font-medium">{p.name}</div>

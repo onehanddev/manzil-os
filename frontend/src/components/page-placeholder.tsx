@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Construction } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export function PagePlaceholder({
   title,
@@ -27,9 +28,9 @@ export function PagePlaceholder({
           <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
             We&apos;re building the full UX for {title.toLowerCase()} — receipts and flats are ready to try in the meantime.
           </p>
-          <Button asChild variant="outline" size="sm" className="mt-4">
-            <Link to="/dashboard">Back to dashboard</Link>
-          </Button>
+          <Link to="/dashboard" className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'mt-4')}>
+            Back to dashboard
+          </Link>
         </div>
       )}
     </div>
