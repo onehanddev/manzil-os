@@ -101,7 +101,7 @@ export function FundsPage() {
                 <Input id="fund-name" placeholder="e.g. Main Fund" value={fundName} onChange={(e) => setFundName(e.target.value)} />
               </div>
               <Button onClick={() => createFund.mutate()} disabled={!fundName.trim() || createFund.isPending} className="w-full">
-                {createFund.isPending ? '…' : 'Create'}
+                {createFund.isPending ? '…' : 'Create fund'}
               </Button>
             </CardContent>
           </Card>
@@ -133,7 +133,7 @@ export function FundsPage() {
                 <Input id="vendor-contact" placeholder="Phone or email" value={vendorContact} onChange={(e) => setVendorContact(e.target.value)} />
               </div>
               <Button onClick={() => createVendor.mutate()} disabled={!vendorName.trim() || createVendor.isPending} className="w-full">
-                {createVendor.isPending ? '…' : 'Create'}
+                {createVendor.isPending ? '…' : 'Create vendor'}
               </Button>
             </CardContent>
           </Card>
@@ -161,7 +161,7 @@ export function FundsPage() {
                 <Input id="exp-cat-name" placeholder="e.g. Electricity" value={expCatName} onChange={(e) => setExpCatName(e.target.value)} />
               </div>
               <Button onClick={() => createExpCat.mutate()} disabled={!expCatName.trim() || createExpCat.isPending} className="w-full">
-                {createExpCat.isPending ? '…' : 'Create'}
+                {createExpCat.isPending ? '…' : 'Create expense category'}
               </Button>
             </CardContent>
           </Card>

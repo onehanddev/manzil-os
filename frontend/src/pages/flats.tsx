@@ -268,7 +268,7 @@ export function FlatsPage() {
                 <p className="text-xs text-muted-foreground">Optional default used to prefill receipt amount. Leave empty if no default.</p>
               </div>
               <Button onClick={() => createCat.mutate()} disabled={!catName.trim() || createCat.isPending} className="w-full">
-                {createCat.isPending ? '…' : 'Create'}
+                {createCat.isPending ? '…' : 'Create category'}
               </Button>
             </CardContent>
           </Card>
