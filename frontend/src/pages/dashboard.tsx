@@ -13,10 +13,10 @@ export function DashboardPage() {
 
   return (
     <PagePlaceholder
-      title={current ? current.society.name : 'Dashboard'}
+      title="Dashboard"
       description={
         current
-          ? `${current.society.location ?? 'Society'} — Phase 0 pilot cashbook`
+          ? `${current.society.name} — ${current.society.location ?? 'Society'} — Phase 0 pilot cashbook`
           : 'Phase 0 pilot — receipts, expenses, and cashbook report'
       }
     >
