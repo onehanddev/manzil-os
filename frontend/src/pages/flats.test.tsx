@@ -10,9 +10,9 @@ import { FlatsPage } from './flats'
 describe('FlatsPage — maintenance_amount (TDD)', () => {
   it('shows maintenance amount input when creating a category (null default)', async () => {
     server.use(
-      http.get('/api/flat-categories', () => HttpResponse.json({ categories: [] })),
-      http.get('/api/flats', () => HttpResponse.json({ flats: [] })),
-      http.get('/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [] })),
+      http.get('*/api/flats', () => HttpResponse.json({ flats: [] })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
     )
     renderWithProviders(<FlatsPage />)
 
@@ -34,11 +34,11 @@ describe('FlatsPage — maintenance_amount (TDD)', () => {
       { id: 'flat-2', flat_number: 'B-202', flat_category_id: 'cat-2', is_active: true, maintenance_amount: null, category_maintenance_amount: null, flat_category: { id: 'cat-2', name: '2 BHK', maintenance_amount: null } },
     ]
     server.use(
-      http.get('/api/flat-categories', () => HttpResponse.json({ categories })),
-      http.get('/api/flats', () => HttpResponse.json({ flats })),
-      http.get('/api/persons', () => HttpResponse.json({ persons: [] })),
-      http.get('/api/flats/flat-1', () => HttpResponse.json(flats[0])),
-      http.get('/api/flats/flat-2', () => HttpResponse.json(flats[1])),
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories })),
+      http.get('*/api/flats', () => HttpResponse.json({ flats })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.get('*/api/flats/flat-1', () => HttpResponse.json(flats[0])),
+      http.get('*/api/flats/flat-2', () => HttpResponse.json(flats[1])),
     )
     renderWithProviders(<FlatsPage />)
 
@@ -55,9 +55,9 @@ describe('FlatsPage — maintenance_amount (TDD)', () => {
     const categories = [{ id: 'cat-1', name: '1 BHK', is_active: true, maintenance_amount: 1800 }]
     const flats = [{ id: 'flat-1', flat_number: 'A-101', flat_category_id: 'cat-1', is_active: true, maintenance_amount: 1800 }]
     server.use(
-      http.get('/api/flat-categories', () => HttpResponse.json({ categories })),
-      http.get('/api/flats', () => HttpResponse.json({ flats })),
-      http.get('/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories })),
+      http.get('*/api/flats', () => HttpResponse.json({ flats })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
     )
     renderWithProviders(<FlatsPage />)
     // Flats are under second tab

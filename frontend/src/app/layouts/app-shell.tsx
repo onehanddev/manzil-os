@@ -80,7 +80,7 @@ export function AppShell() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
-  const societies = me?.memberships.map((m) => m.society) ?? []
+  const societies = me?.memberships?.map((m) => m.society) ?? []
   const current = societies.find((s) => s.id === currentSocietyId) ?? null
 
   // Auto-select the first society once memberships load.

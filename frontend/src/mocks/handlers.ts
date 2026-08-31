@@ -16,6 +16,7 @@ type OpeningDue = { flat_id: string; amount: number }
 type Fund = { id: string; society_id: string; name: string; is_active: boolean }
 type Vendor = { id: string; society_id: string; name: string; contact_info: string | null; is_active: boolean }
 type ExpenseCategory = { id: string; society_id: string; name: string; is_active: boolean }
+type Receipt = { id: string; society_id: string; flat_id: string; amount: number; business_date: string; type: string; status: string; voided_at?: string | null; void_reason?: string | null; fund_id?: string | null; payer_person_id?: string | null }
 
 const store: {
   categories: FlatCategory[]
@@ -26,6 +27,7 @@ const store: {
   funds: Fund[]
   vendors: Vendor[]
   expenseCategories: ExpenseCategory[]
+  receipts: Receipt[]
 } = {
   categories: [
     // Seed Main Fund / Sinking Fund equivalent for direct API parity with backend migration
@@ -46,10 +48,42 @@ const store: {
     { id: 'exp-cat-lift', society_id: societies[0].id, name: 'Lift', is_active: true },
     { id: 'exp-cat-repair', society_id: societies[0].id, name: 'Repair', is_active: true },
   ],
+  receipts: [],
 }
 
 function genId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`
+}
+
+function enrichFlat(f: Flat) {
+  const cat = store.categories.find((c) => c.id === f.flat_category_id)
+  const amt = cat?.maintenance_amount ?? null
+  const activeOccs = store.occupants.filter((o) => o.flat_id === f.id && o.is_active)
+  const ownerOcc = activeOccs.find((o) => o.role === 'OWNER')
+  const tenantOcc = activeOccs.find((o) => o.role === 'TENANT')
+  const ownerPerson = ownerOcc ? store.persons.find((p) => p.id === ownerOcc.person_id) : null
+  const tenantPerson = tenantOcc ? store.persons.find((p) => p.id === tenantOcc.person_id) : null
+  const owner = ownerPerson ? { id: ownerPerson.id, name: ownerPerson.name, mobile: ownerPerson.mobile, email: null } : null
+  const tenant = tenantPerson ? { id: tenantPerson.id, name: tenantPerson.name, mobile: tenantPerson.mobile, email: null } : null
+  const defaultRole = tenant ? 'TENANT' : owner ? 'OWNER' : null
+  const defaultPerson = tenantPerson || ownerPerson
+  const default_payer = defaultPerson ? { person: { id: defaultPerson.id, name: defaultPerson.name, mobile: defaultPerson.mobile }, role: defaultRole } : null
+  const occupants = activeOccs.map((o) => {
+    const person = store.persons.find((p) => p.id === o.person_id)
+    return { occupant_id: o.id, person: person ? { id: person.id, name: person.name, mobile: person.mobile } : null, role: o.role, is_active: o.is_active }
+  })
+  return {
+    ...f,
+    maintenance_amount: amt,
+    category_maintenance_amount: amt,
+    flat_category: cat ? { id: cat.id, name: cat.name, maintenance_amount: amt } : null,
+    owner,
+    tenant,
+    occupants,
+    default_payer,
+    default_payer_person_id: defaultPerson?.id ?? null,
+    default_payer_role: defaultRole,
+  }
 }
 
 export const handlers = [
@@ -113,31 +147,47 @@ export const handlers = [
   }),
 
   // ---- Flats ----
-  http.get('*/api/flats', () => {
-    const flats = store.flats.map((f) => {
-      const cat = store.categories.find((c) => c.id === f.flat_category_id)
-      const amt = cat?.maintenance_amount ?? null
-      return {
-        ...f,
-        maintenance_amount: amt,
-        category_maintenance_amount: amt,
-        flat_category: cat ? { id: cat.id, name: cat.name, maintenance_amount: amt } : null,
-      }
-    })
+  http.get('*/api/flats', ({ request }) => {
+    const url = new URL(request.url)
+    const withDues = url.searchParams.get('with_dues') === 'true'
+    let flats = store.flats.map((f) => enrichFlat(f))
+    if (withDues) {
+      flats = flats.map((fl) => {
+        const opening = store.openingDues.get(fl.id)?.amount ?? 0
+        const totalPaid = store.receipts.filter((r) => r.flat_id === fl.id && r.status !== 'VOIDED').reduce((s, r) => s + r.amount, 0)
+        return { ...fl, opening_due: opening, total_paid: totalPaid, current_due: opening - totalPaid }
+      })
+    }
     return HttpResponse.json({ flats })
+  }),
+  http.get('*/api/flats/:flatId/ledger', ({ params }) => {
+    const { flatId } = params as { flatId: string }
+    const flat = store.flats.find((f) => f.id === flatId)
+    if (!flat) return HttpResponse.json({ detail: 'Flat not found' }, { status: 404 })
+    const opening = store.openingDues.get(flatId)?.amount ?? 0
+    const receipts = store.receipts.filter((r) => r.flat_id === flatId && r.status !== 'VOIDED').sort((a, b) => a.business_date.localeCompare(b.business_date))
+    const totalPaid = receipts.reduce((s, r) => s + r.amount, 0)
+    const current_due = opening - totalPaid
+    const entries: unknown[] = [{ type: 'OPENING', business_date: null, amount: opening, narration: 'Opening due', running_due: opening, current_due: opening }]
+    let running = opening
+    for (const r of receipts) {
+      running -= r.amount
+      entries.push({ id: r.id, type: r.type, business_date: r.business_date, amount: r.amount, narration: null, running_due: running, current_due: running })
+    }
+    return HttpResponse.json({ flat_id: flatId, flat_number: flat.flat_number, opening_due: opening, opening, total_paid: totalPaid, current_due, entries, ledger: entries, rows: entries, receipts })
   }),
   http.get('*/api/flats/:flatId', ({ params }) => {
     const { flatId } = params as { flatId: string }
     const f = store.flats.find((x) => x.id === flatId)
     if (!f) return HttpResponse.json({ detail: 'Flat not found' }, { status: 404 })
-    const cat = store.categories.find((c) => c.id === f.flat_category_id)
-    const amt = cat?.maintenance_amount ?? null
-    return HttpResponse.json({
-      ...f,
-      maintenance_amount: amt,
-      category_maintenance_amount: amt,
-      flat_category: cat ? { id: cat.id, name: cat.name, maintenance_amount: amt } : null,
-    })
+    return HttpResponse.json(enrichFlat(f))
+  }),
+  http.get('*/api/flats/:flatId/occupants', ({ params }) => {
+    const { flatId } = params as { flatId: string }
+    const flat = store.flats.find((f) => f.id === flatId)
+    if (!flat) return HttpResponse.json({ detail: 'Flat not found' }, { status: 404 })
+    const enriched = enrichFlat(flat)
+    return HttpResponse.json({ flat_id: flatId, occupants: enriched.occupants, owner: enriched.owner, tenant: enriched.tenant, default_payer: enriched.default_payer })
   }),
   http.post('*/api/flats', async ({ request }) => {
     const body = (await request.json()) as { flat_number?: string; flat_category_id?: string }
@@ -286,6 +336,99 @@ export const handlers = [
     const cat: ExpenseCategory = { id: genId('expcat'), society_id: societies[0].id, name, is_active: true }
     store.expenseCategories.push(cat)
     return HttpResponse.json(cat, { status: 201 })
+  }),
+
+  // ---- Receipts (directly POSTED, undo via void with history) ----
+  http.get('*/api/receipts', ({ request }) => {
+    const url = new URL(request.url)
+    const includeVoided = url.searchParams.get('include_voided') === 'true'
+    const flatId = url.searchParams.get('flat_id')
+    const from = url.searchParams.get('from') ?? url.searchParams.get('date_from')
+    const to = url.searchParams.get('to') ?? url.searchParams.get('date_to')
+    const collector = url.searchParams.get('collected_by') ?? url.searchParams.get('collector_id')
+    let list = includeVoided ? store.receipts : store.receipts.filter((r) => r.status !== 'VOIDED')
+    if (flatId) list = list.filter((r) => r.flat_id === flatId)
+    if (from) list = list.filter((r) => r.business_date >= from)
+    if (to) list = list.filter((r) => r.business_date <= to)
+    if (collector) list = list.filter((r) => (r as unknown as Record<string, unknown>).collected_by === collector || (r as unknown as Record<string, unknown>).collected_by === collector)
+    // collected_by not stored in mock receipts; fallback: ignore if not present – but filter still applied via flat_id etc for test
+    return HttpResponse.json({ receipts: list })
+  }),
+  http.get('*/api/reports/flat-dues.xlsx', () => {
+    // Return a minimal placeholder – frontend download test not covering this in unit tests
+    return HttpResponse.json({ detail: 'Not mocked' }, { status: 200 })
+  }),
+  http.get('*/reports/flat-dues.xlsx', () => {
+    return HttpResponse.json({ detail: 'Not mocked' }, { status: 200 })
+  }),
+  http.get('*/api/receipts/:receiptId', ({ params }) => {
+    const { receiptId } = params as { receiptId: string }
+    const r = store.receipts.find((x) => x.id === receiptId)
+    if (!r) return HttpResponse.json({ detail: 'Receipt not found' }, { status: 404 })
+    return HttpResponse.json(r)
+  }),
+  http.post('*/api/receipts', async ({ request }) => {
+    const body = (await request.json()) as { flat_id?: string; amount?: number; business_date?: string; fund_id?: string; payer_person_id?: string; type?: string; narration?: string; payment_method?: string }
+    if (!body.flat_id || body.amount == null || !body.business_date || !body.fund_id) return HttpResponse.json({ detail: 'flat_id, amount, business_date, fund_id required' }, { status: 422 })
+    if (body.amount <= 0) return HttpResponse.json({ detail: 'amount must be > 0' }, { status: 422 })
+    if (body.payment_method && body.payment_method.toUpperCase() !== 'CASH') return HttpResponse.json({ detail: 'payment_method must be CASH' }, { status: 422 })
+    const receipt: Receipt = {
+      id: genId('receipt'),
+      society_id: societies[0].id,
+      flat_id: body.flat_id,
+      amount: body.amount,
+      business_date: body.business_date,
+      type: (body.type ?? 'REGULAR').toUpperCase(),
+      status: 'POSTED',
+      voided_at: null,
+      void_reason: null,
+      fund_id: body.fund_id,
+      payer_person_id: body.payer_person_id ?? null,
+    }
+    store.receipts.push(receipt)
+    return HttpResponse.json({ ...receipt, payment_method: 'CASH' }, { status: 201 })
+  }),
+  http.post('*/api/receipts/:receiptId/void', async ({ params, request }) => {
+    const { receiptId } = params as { receiptId: string }
+    const r = store.receipts.find((x) => x.id === receiptId)
+    if (!r) return HttpResponse.json({ detail: 'Receipt not found' }, { status: 404 })
+    if (r.status === 'VOIDED') return HttpResponse.json({ detail: 'Receipt already voided' }, { status: 409 })
+    const body = (await request.json().catch(() => ({}))) as { reason?: string }
+    r.status = 'VOIDED'
+    r.voided_at = new Date().toISOString()
+    r.void_reason = body.reason ?? null
+    return HttpResponse.json(r)
+  }),
+  http.post('*/api/receipts/:receiptId/undo', async ({ params, request }) => {
+    const { receiptId } = params as { receiptId: string }
+    const r = store.receipts.find((x) => x.id === receiptId)
+    if (!r) return HttpResponse.json({ detail: 'Receipt not found' }, { status: 404 })
+    if (r.status === 'VOIDED') return HttpResponse.json({ detail: 'Receipt already voided' }, { status: 409 })
+    const body = (await request.json().catch(() => ({}))) as { reason?: string }
+    r.status = 'VOIDED'
+    r.voided_at = new Date().toISOString()
+    r.void_reason = body.reason ?? 'Undo'
+    return HttpResponse.json(r)
+  }),
+  http.get('*/api/notifications', () => {
+    // In MSW, notifications are derived from receipts for test parity
+    const notifs = store.receipts
+      .filter((r) => r.status !== 'VOIDED')
+      .slice(-10)
+      .map((r) => ({
+        id: `notif-${r.id}`,
+        society_id: r.society_id,
+        receipt_id: r.id,
+        payer_person_id: r.payer_person_id,
+        flat_id: r.flat_id,
+        channel: 'WHATSAPP',
+        provider_mode: 'test',
+        status: 'LOGGED',
+        message: `[test] receipt ${r.id}`,
+        business_date: r.business_date,
+        created_at: new Date().toISOString(),
+      }))
+    return HttpResponse.json({ notifications: notifs })
   }),
 
   // Health (proxied via /api prefix in dev, but MSW bypasses actual backend health)

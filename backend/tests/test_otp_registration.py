@@ -188,23 +188,51 @@ def test_admin_can_list_pending_and_approve(monkeypatch):
     r_flats = client.get("/api/flats", headers={"Authorization": f"Bearer {pending_token}"})
     assert r_flats.status_code == 200, f"after approval should access flats: {r_flats.text}"
 
-    # Also can create receipt
+    # Also can create receipt (needs flat that belongs to society and a fund)
+    # Use seeded flat category + create a real flat for this test
+    r_cat = client.post("/api/flat-categories", headers={"Authorization": f"Bearer {admin_token}"}, json={"name": f"OTP-CAT-{uuid.uuid4().hex[:4]}"})
+    cat_id = r_cat.json()["id"]
+    r_flat = client.post("/api/flats", headers={"Authorization": f"Bearer {admin_token}"}, json={"flat_number": f"OTP-F-{uuid.uuid4().hex[:4]}", "flat_category_id": cat_id})
+    flat_id = r_flat.json()["id"]
+    r_fund = client.get("/api/funds", headers={"Authorization": f"Bearer {admin_token}"})
+    fund_id = r_fund.json()["funds"][0]["id"]
     r_receipt = client.post(
         "/api/receipts",
         headers={"Authorization": f"Bearer {pending_token}"},
-        json={"flat_id": "00000000-0000-0000-0000-000000000001", "amount": 10, "business_date": "2026-08-01"},
+        json={"flat_id": flat_id, "amount": 10, "business_date": "2026-08-01", "fund_id": fund_id},
     )
-    assert r_receipt.status_code == 200
+    assert r_receipt.status_code == 201, r_receipt.text
 
-    # Cleanup
+    # Cleanup — FK order: receipts/expenses -> flats -> categories -> membership_roles -> memberships -> users
     with psycopg.connect(TEST_DB_URL, autocommit=True) as c:
         with c.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE mobile=%s", (pending_mobile,))
-            r = cur.fetchone()
-            if r:
-                cur.execute("DELETE FROM membership_roles WHERE society_membership_id IN (SELECT id FROM society_memberships WHERE user_id=%s)", (r[0],))
-                cur.execute("DELETE FROM society_memberships WHERE user_id=%s", (r[0],))
-                cur.execute("DELETE FROM users WHERE id=%s", (r[0],))
+            row = cur.fetchone()
+            if row:
+                uid = row[0]
+                cur.execute("DELETE FROM receipts WHERE collected_by IN (SELECT id FROM society_memberships WHERE user_id=%s)", (uid,))
+                cur.execute("DELETE FROM expenses WHERE created_by IN (SELECT id FROM society_memberships WHERE user_id=%s)", (uid,))
+                cur.execute("DELETE FROM cash_opening_balances WHERE created_by IN (SELECT id FROM society_memberships WHERE user_id=%s)", (uid,))
+            # flats created in this test (FK: receipts.flat_id, opening_dues.flat_id)
+            try:
+                cur.execute("DELETE FROM receipts WHERE flat_id=%s", (flat_id,))
+            except Exception:
+                pass
+            try:
+                cur.execute("DELETE FROM flats WHERE id=%s", (flat_id,))
+            except Exception:
+                pass
+            try:
+                cur.execute("DELETE FROM flat_categories WHERE id=%s", (cat_id,))
+            except Exception:
+                pass
+            cur.execute("SELECT id FROM users WHERE mobile=%s", (pending_mobile,))
+            row2 = cur.fetchone()
+            if row2:
+                uid2 = row2[0]
+                cur.execute("DELETE FROM membership_roles WHERE society_membership_id IN (SELECT id FROM society_memberships WHERE user_id=%s)", (uid2,))
+                cur.execute("DELETE FROM society_memberships WHERE user_id=%s", (uid2,))
+                cur.execute("DELETE FROM users WHERE id=%s", (uid2,))
 
 
 # Slice 4: Register -> OTP verify -> set password -> login with password (Phase 1 registration flow)

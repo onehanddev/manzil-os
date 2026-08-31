@@ -246,6 +246,8 @@ class Receipt(Base):
     __table_args__ = (
         CheckConstraint("amount > 0", name="receipts_amount_check"),
         CheckConstraint("type IN ('REGULAR', 'ARREARS', 'PART', 'ADVANCE')", name="receipts_type_check"),
+        CheckConstraint("status IN ('POSTED', 'VOIDED')", name="receipts_status_check"),
+        CheckConstraint("payment_method = 'CASH'", name="receipts_payment_method_check"),
         ForeignKeyConstraint(
             ["society_id", "flat_id"],
             ["flats.society_id", "flats.id"],
@@ -253,20 +255,31 @@ class Receipt(Base):
         ),
         Index("receipts_by_flat_business_date", "flat_id", "business_date"),
         Index("receipts_by_society_business_date", "society_id", "business_date"),
+        Index("receipts_by_fund", "fund_id"),
+        Index("receipts_by_status", "status"),
+        Index("receipts_by_society_status", "society_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
     flat_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     payer_person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id"))
+    fund_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("funds.id"))
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     type: Mapped[str] = mapped_column(Text, server_default=text("'REGULAR'"), nullable=False)
     narration: Mapped[str | None] = mapped_column(Text)
+    payment_method: Mapped[str] = mapped_column(Text, server_default=text("'CASH'"), nullable=False)
     collected_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("society_memberships.id"), nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+    # Direct submit – no draft state; undo is via void with audit history
+    status: Mapped[str] = mapped_column(Text, server_default=text("'POSTED'"), nullable=False)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    voided_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("society_memberships.id"))
+    void_reason: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 
 class Fund(Base):
@@ -321,14 +334,74 @@ class ExpenseCategory(Base):
     society: Mapped[Society] = relationship()
 
 
+class Expense(Base):
+    __tablename__ = "expenses"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="expenses_amount_check"),
+        Index("expenses_by_society_business_date", "society_id", "business_date"),
+        Index("expenses_by_fund", "fund_id"),
+        Index("expenses_by_category", "category_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
+    business_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    fund_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("funds.id"))
+    category_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("expense_categories.id"), nullable=False)
+    vendor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("vendors.id"))
+    narration: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("society_memberships.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
+class CashOpeningBalance(Base):
+    __tablename__ = "cash_opening_balances"
+    __table_args__ = (CheckConstraint("amount >= 0", name="cash_opening_balances_amount_check"),)
+
+    society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), primary_key=True)
+    opening_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("society_memberships.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        CheckConstraint("provider_mode IN ('test', 'live')", name="notifications_provider_mode_check"),
+        CheckConstraint("status IN ('LOGGED', 'SENT', 'FAILED')", name="notifications_status_check"),
+        Index("notifications_by_society", "society_id"),
+        Index("notifications_by_receipt", "receipt_id"),
+        Index("notifications_by_society_date", "society_id", "business_date"),
+        Index("notifications_by_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
+    receipt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("receipts.id", ondelete="SET NULL"))
+    payer_person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="SET NULL"))
+    flat_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("flats.id", ondelete="SET NULL"))
+    channel: Mapped[str] = mapped_column(Text, server_default=text("'WHATSAPP'"), nullable=False)
+    provider_mode: Mapped[str] = mapped_column(Text, server_default=text("'test'"), nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'LOGGED'"), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text)
+    business_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
 __all__ = [
     "Base",
+    "CashOpeningBalance",
+    "Expense",
     "ExpenseCategory",
     "Flat",
     "FlatCategory",
     "FlatOccupant",
     "Fund",
     "MembershipRole",
+    "Notification",
     "OpeningDue",
     "Person",
     "Receipt",

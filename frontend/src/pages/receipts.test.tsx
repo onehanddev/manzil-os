@@ -18,11 +18,11 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
       { id: 'cat-2', name: '2 BHK', is_active: true, maintenance_amount: null },
     ]
     server.use(
-      http.get('/api/flats', () => HttpResponse.json({ flats })),
-      http.get('/api/flat-categories', () => HttpResponse.json({ categories })),
-      http.get('/api/persons', () => HttpResponse.json({ persons: [] })),
-      http.get('/api/flats/flat-1', () => HttpResponse.json(flats[0])),
-      http.get('/api/flats/flat-2', () => HttpResponse.json(flats[1])),
+      http.get('*/api/flats', () => HttpResponse.json({ flats })),
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.get('*/api/flats/flat-1', () => HttpResponse.json(flats[0])),
+      http.get('*/api/flats/flat-2', () => HttpResponse.json(flats[1])),
     )
 
     renderWithProviders(<ReceiptsPage />)
@@ -49,9 +49,9 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
       { id: 'flat-1', flat_number: 'A-101', flat_category_id: 'cat-1', is_active: true, maintenance_amount: 1500 },
     ]
     server.use(
-      http.get('/api/flats', () => HttpResponse.json({ flats })),
-      http.get('/api/flat-categories', () => HttpResponse.json({ categories: [{ id: 'cat-1', name: '1 BHK', is_active: true, maintenance_amount: 1500 }] })),
-      http.get('/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.get('*/api/flats', () => HttpResponse.json({ flats })),
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [{ id: 'cat-1', name: '1 BHK', is_active: true, maintenance_amount: 1500 }] })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
     )
     renderWithProviders(<ReceiptsPage />)
     const amountInput = await screen.findByLabelText(/Amount/i)

@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 export function DashboardPage() {
   const { data: me, isLoading } = useMe()
   const currentSocietyId = useSocietyStore((s) => s.currentSocietyId)
-  const current = me?.memberships.find((m) => m.society.id === currentSocietyId)
+  const current = me?.memberships?.find((m) => m.society.id === currentSocietyId)
 
   return (
     <PagePlaceholder

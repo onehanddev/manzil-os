@@ -15,14 +15,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.admin.router import router as admin_router
 from app.auth.router import router as auth_router
+from app.cashbook.router import router as cashbook_router
 from app.expense_categories.router import router as expense_categories_router
 from app.flat_categories.router import router as flat_categories_router
 from app.flats.router import router as flats_router
 from app.funds.router import router as funds_router
 from app.health.router import router as health_router
+from app.notifications.router import router as notifications_router
 from app.opening_dues.router import router as opening_dues_router
 from app.persons.router import router as persons_router
-from app.receipts.router import router as receipts_router
+from app.reports.router import router as reports_router
 from app.vendors.router import router as vendors_router
 from app.webhooks.router import router as webhooks_router
 
@@ -51,12 +53,14 @@ def create_app() -> FastAPI:
     app.include_router(flat_categories_router)
     app.include_router(flats_router)
     app.include_router(persons_router)
-    app.include_router(receipts_router)
+    app.include_router(cashbook_router)
     app.include_router(opening_dues_router)
     app.include_router(funds_router)
     app.include_router(vendors_router)
     app.include_router(expense_categories_router)
     app.include_router(webhooks_router)
+    app.include_router(notifications_router)
+    app.include_router(reports_router)
     return app
 
 

@@ -1,12 +1,8 @@
-"""Receipts vertical slice – requires active membership."""
+"""Receipts — re-exported from the cashbook deep module.
 
-from fastapi import APIRouter, Depends
+Kept for backwards compatibility; the deep module lives at `app.cashbook`.
+"""
 
-from app.auth.deps import require_active
+from app.cashbook.router import router  # noqa: F401 — single seam lives in cashbook
 
-router = APIRouter(tags=["receipts"])
-
-
-@router.post("/api/receipts")
-def create_receipt(payload: dict, current=Depends(require_active)):
-    return {"status": "receipt created", "by": current["user_id"], "roles": current["roles"]}
+__all__ = ["router"]

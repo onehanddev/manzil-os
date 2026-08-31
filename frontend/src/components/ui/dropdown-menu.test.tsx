@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,17 +10,17 @@ import {
 
 describe('DropdownMenu', () => {
   it('renders labels without requiring a separate group context', () => {
-    expect(() => {
-      render(
-        <DropdownMenu>
-          <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuLabel>Society</DropdownMenuLabel>
-            <DropdownMenuItem>Alpha</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>,
-      )
-    }).not.toThrow()
+    render(
+      <DropdownMenu>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuLabel>Society</DropdownMenuLabel>
+          <DropdownMenuItem>Alpha</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open menu' }))
 
     expect(screen.getByText('Society')).toBeInTheDocument()
   })

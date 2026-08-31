@@ -52,6 +52,8 @@ def test_alembic_migration_initializes_cleanly_on_empty_db():
         "funds",
         "vendors",
         "expense_categories",
+        "expenses",
+        "cash_opening_balances",
     ]:
         assert required in tables, f"missing required table {required}, got {tables}"
 
@@ -63,13 +65,15 @@ def test_no_fund_charge_expense_tables(conn):
             "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
         )
         tables = {r[0] for r in cur.fetchall()}
+    # expenses and cash_opening_balances are now part of the cashbook deep module
+    assert "expenses" in tables, "expenses table should exist (cashbook deep module)"
+    assert "cash_opening_balances" in tables, "cash_opening_balances table should exist"
     for forbidden in [
         "charge_types",
         "maintenance_rates",
         "charges",
         "payment_allocations",
         "fund_transactions",
-        "expenses",
     ]:
         assert forbidden not in tables, f"forbidden table {forbidden} should not exist in trimmed schema"
 

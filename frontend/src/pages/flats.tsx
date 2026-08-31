@@ -8,8 +8,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
+import { useAuthStore } from '@/stores/auth-store'
 
 type FlatCategory = { id: string; name: string; is_active: boolean; size_sq_ft?: number | null; maintenance_amount?: number | null }
+type OccupantPerson = { id: string; name: string; mobile: string; email?: string | null }
 type Flat = {
   id: string
   flat_number: string
@@ -18,8 +21,36 @@ type Flat = {
   maintenance_amount?: number | null
   category_maintenance_amount?: number | null
   flat_category?: { id: string; name: string; maintenance_amount?: number | null } | null
+  category?: { id: string; name: string } | null
+  owner?: OccupantPerson | null
+  tenant?: OccupantPerson | null
+  occupants?: { occupant_id: string; person: OccupantPerson | null; role: string; is_active: boolean }[]
+  default_payer?: { person: OccupantPerson | null; role: string | null } | null
+  default_payer_person_id?: string | null
+  default_payer_role?: string | null
+  opening_due?: number | null
+  total_paid?: number | null
+  current_due?: number | null
 }
 type Person = { id: string; name: string; mobile: string; alt_mobile?: string | null }
+type LedgerEntry = {
+  id?: string
+  type: string
+  business_date: string | null
+  amount: number
+  narration?: string | null
+  running_due: number
+  current_due?: number
+}
+type LedgerResponse = {
+  flat_id: string
+  flat_number: string
+  opening_due: number
+  total_paid: number
+  current_due: number
+  entries: LedgerEntry[]
+  default_payer?: OccupantPerson | null
+}
 
 function useCategories() {
   return useQuery({
@@ -31,7 +62,7 @@ function useCategories() {
 function useFlats() {
   return useQuery({
     queryKey: ['flats'],
-    queryFn: () => api.get<{ flats: Flat[] }>('/flats'),
+    queryFn: () => api.get<{ flats: Flat[] }>('/flats?with_dues=true'),
   })
 }
 
@@ -149,6 +180,35 @@ export function FlatsPage() {
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed'),
   })
 
+  // ledger drawer
+  const [ledgerFlatId, setLedgerFlatId] = useState<string | null>(null)
+  const { data: ledgerData, isLoading: ledgerLoading } = useQuery({
+    queryKey: ['flat-ledger', ledgerFlatId],
+    queryFn: () => api.get<LedgerResponse>(`/flats/${ledgerFlatId}/ledger`),
+    enabled: !!ledgerFlatId,
+  })
+
+  const handleDownloadExcel = async () => {
+    try {
+      const token = useAuthStore.getState().accessToken
+      const base = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+      const res = await fetch(`${base}/reports/flat-dues.xlsx`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`Download failed (${res.status})`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'flat-dues.xlsx'
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Excel downloaded')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Download failed')
+    }
+  }
+
   // default payer preview
   const [dpFlatId, setDpFlatId] = useState('')
   const [dpResult, setDpResult] = useState<string | null>(null)
@@ -260,7 +320,7 @@ export function FlatsPage() {
                 <div className="space-y-1">
                   <Label>Category</Label>
                   <Select value={flatCatId} onValueChange={(v) => setFlatCatId(v ?? '')}>
-                    <SelectTrigger data-testid="create-flat-category-select"><SelectValue placeholder="Select category" /></SelectTrigger>
+                    <SelectTrigger data-testid="create-flat-category-select"><SelectValue placeholder="Select category">{categories.find((c) => c.id === flatCatId)?.name ?? undefined}</SelectValue></SelectTrigger>
                     <SelectContent>
                       {categories.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
@@ -277,29 +337,105 @@ export function FlatsPage() {
             </CardContent>
           </Card>
 
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={handleDownloadExcel} data-testid="download-excel-btn">
+              Download Excel
+            </Button>
+          </div>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Flats</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">Flats — Current Due (advance = minus)</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {flatLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : flats.length === 0 ? <p className="text-sm text-muted-foreground">No flats yet.</p> : flats.map((f) => {
                 const mAmt = f.maintenance_amount ?? f.category_maintenance_amount ?? f.flat_category?.maintenance_amount
+                const due = f.current_due ?? 0
+                const isAdvance = due < 0
                 return (
                   <div key={f.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                    <div>
-                      <div className="text-sm font-medium">{f.flat_number}</div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">{f.flat_number}</span>
+                        <span className={`text-xs font-semibold ${isAdvance ? 'text-emerald-600' : due > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
+                          ₹{due} {isAdvance ? '(advance)' : ''}
+                        </span>
+                        {!f.is_active && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">Inactive</span>}
+                      </div>
                       <div className="text-xs text-muted-foreground">
-                        {f.is_active ? 'Active' : 'Inactive'} · {f.id.slice(0, 8)}
+                        {f.category?.name ?? f.flat_category?.name ?? ''} · {f.is_active ? 'Active' : 'Inactive'} · {f.id.slice(0, 8)}
                         {mAmt != null ? ` · ₹${mAmt} default` : ' · No default'}
                       </div>
-                      {mAmt != null && <div className="text-xs">₹{mAmt}</div>}
+                      <div className="text-xs">
+                        {f.tenant ? <span className="text-muted-foreground">Tenant: </span> : null}{f.tenant ? <span className="font-medium">{f.tenant.name}</span> : null}
+                        {f.tenant && f.owner ? <span className="text-muted-foreground"> · </span> : null}
+                        {f.owner ? <><span className="text-muted-foreground">Owner: </span><span className="font-medium">{f.owner.name}</span></> : !f.tenant ? <span className="text-xs text-muted-foreground">No occupant</span> : null}
+                      </div>
+                      {f.default_payer?.person ? (
+                        <div className="text-[11px] text-muted-foreground">POC: {f.default_payer.person.name} · {f.default_payer.person.mobile} ({f.default_payer.role})</div>
+                      ) : f.default_payer_person_id ? (
+                        <div className="text-[11px] text-muted-foreground">POC: {f.default_payer_role}</div>
+                      ) : null}
+                      <div className="text-[11px] text-muted-foreground">Opening ₹{f.opening_due ?? 0} · Paid ₹{f.total_paid ?? 0} · Due ₹{due}</div>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => { setOccFlatId(f.id); setDpFlatId(f.id); setOdFlatId(f.id); fetchOd(); }}>
-                      Select
-                    </Button>
+                    <div className="flex flex-col gap-1">
+                      <Button variant="outline" size="sm" onClick={() => setLedgerFlatId(f.id)} data-testid={`ledger-${f.flat_number}`}>
+                        Ledger
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => { setOccFlatId(f.id); setDpFlatId(f.id); setOdFlatId(f.id); fetchOd(); }}>
+                        Select
+                      </Button>
+                    </div>
                   </div>
                 )
               })}
             </CardContent>
           </Card>
+          <Sheet open={!!ledgerFlatId} onOpenChange={(o) => !o && setLedgerFlatId(null)}>
+            <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto print:max-h-none">
+              <SheetHeader>
+                <SheetTitle>Flat Ledger — {flats.find((x) => x.id === ledgerFlatId)?.flat_number ?? ledgerFlatId?.slice(0, 8)}</SheetTitle>
+                <SheetDescription>
+                  Opening + receipts with running due (advance = negative). Print-friendly.
+                </SheetDescription>
+              </SheetHeader>
+              {ledgerLoading ? (
+                <p className="mt-4 text-sm text-muted-foreground">Loading…</p>
+              ) : ledgerData ? (
+                <div className="mt-4 space-y-3 print:space-y-2">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Opening: ₹{ledgerData.opening_due}</span>
+                    <span>Total paid: ₹{ledgerData.total_paid}</span>
+                    <span className={ledgerData.current_due < 0 ? 'text-emerald-600 font-semibold' : 'font-semibold'}>Current due: ₹{ledgerData.current_due} {ledgerData.current_due < 0 ? '(advance)' : ''}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-xs text-muted-foreground">
+                          <th className="py-1 text-left">Date</th>
+                          <th className="py-1 text-left">Particulars</th>
+                          <th className="py-1 text-right">Amount</th>
+                          <th className="py-1 text-right">Running Due</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ledgerData.entries.map((e, idx) => (
+                          <tr key={idx} className="border-b">
+                            <td className="py-1 text-xs">{e.business_date ?? '—'}</td>
+                            <td className="py-1 text-xs">{e.type === 'OPENING' ? 'Opening due' : `${e.type} ${e.narration ? `· ${e.narration}` : ''}`}</td>
+                            <td className="py-1 text-right text-xs">{e.type === 'OPENING' ? `₹${e.amount}` : `-₹${e.amount}`}</td>
+                            <td className={`py-1 text-right text-xs font-medium ${e.running_due < 0 ? 'text-emerald-600' : e.running_due > 0 ? 'text-red-600' : ''}`}>₹{e.running_due}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => window.print()} className="print:hidden">
+                    Print
+                  </Button>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-muted-foreground">No ledger data.</p>
+              )}
+            </SheetContent>
+          </Sheet>
         </TabsContent>
 
         <TabsContent value="persons" className="space-y-4">
@@ -345,7 +481,7 @@ export function FlatsPage() {
               <div className="space-y-1">
                 <Label>Flat</Label>
                 <Select value={occFlatId} onValueChange={(v) => setOccFlatId(v ?? '')}>
-                  <SelectTrigger data-testid="assign-flat-select"><SelectValue placeholder="Select flat" /></SelectTrigger>
+                  <SelectTrigger data-testid="assign-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === occFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
                   <SelectContent>
                     {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
                   </SelectContent>
@@ -354,7 +490,7 @@ export function FlatsPage() {
               <div className="space-y-1">
                 <Label>Person</Label>
                 <Select value={occPersonId} onValueChange={(v) => setOccPersonId(v ?? '')}>
-                  <SelectTrigger data-testid="assign-person-select"><SelectValue placeholder="Select person" /></SelectTrigger>
+                  <SelectTrigger data-testid="assign-person-select"><SelectValue placeholder="Select person">{persons.find((p) => p.id === occPersonId)?.name ?? undefined}</SelectValue></SelectTrigger>
                   <SelectContent>
                     {persons.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.mobile}</SelectItem>)}
                   </SelectContent>
@@ -363,7 +499,7 @@ export function FlatsPage() {
               <div className="space-y-1">
                 <Label>Role</Label>
                 <Select value={occRole} onValueChange={(v) => setOccRole(v as 'OWNER' | 'TENANT')}>
-                  <SelectTrigger data-testid="assign-role-select"><SelectValue /></SelectTrigger>
+                  <SelectTrigger data-testid="assign-role-select"><SelectValue>{occRole}</SelectValue></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="OWNER">OWNER</SelectItem>
                     <SelectItem value="TENANT">TENANT</SelectItem>
@@ -378,7 +514,7 @@ export function FlatsPage() {
                 <div className="text-xs font-medium">Default payer preview</div>
                 <div className="mt-1 flex gap-2">
                   <Select value={dpFlatId} onValueChange={(v) => setDpFlatId(v ?? '')}>
-                    <SelectTrigger className="flex-1" data-testid="preview-flat-select"><SelectValue placeholder="Select flat" /></SelectTrigger>
+                    <SelectTrigger className="flex-1" data-testid="preview-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === dpFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
                     <SelectContent>
                       {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
                     </SelectContent>
@@ -399,7 +535,7 @@ export function FlatsPage() {
               <div className="space-y-1">
                 <Label>Flat</Label>
                 <Select value={odFlatId} onValueChange={(v) => { setOdFlatId(v ?? ''); setOdCurrent(null); }}>
-                  <SelectTrigger data-testid="opening-flat-select"><SelectValue placeholder="Select flat" /></SelectTrigger>
+                  <SelectTrigger data-testid="opening-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === odFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
                   <SelectContent>
                     {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
                   </SelectContent>
