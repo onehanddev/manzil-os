@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
+  Bell,
   Building2,
   ChevronDown,
   HandCoins,
@@ -11,7 +12,7 @@ import {
   PiggyBank,
   Wallet,
 } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api/client'
@@ -82,6 +83,10 @@ export function AppShell() {
 
   const societies = me?.memberships?.map((m) => m.society) ?? []
   const current = societies.find((s) => s.id === currentSocietyId) ?? null
+  const currentMembership = me?.memberships?.find((membership) => membership.society.id === currentSocietyId) ?? me?.memberships?.[0]
+  const currentRoles = (currentMembership?.roles ?? []) as string[]
+  const isAdmin = me?.platform_admin === true || currentRoles.includes('super_admin') || currentRoles.includes('SOCIETY_ADMIN')
+  const primaryNav = PRIMARY_NAV.filter((item) => item.to !== '/reports' || isAdmin)
 
   // Auto-select the first society once memberships load.
   // Phase 0 is single-society; keep auto-select for demo/mock but do not expose multi-society UI.
@@ -120,6 +125,7 @@ export function AppShell() {
             Manzil OS
           </NavLink>
           <div className="ml-auto flex items-center gap-1">
+            <NotificationBell />
             <SocietySwitcher
               societies={societies}
               current={current}
@@ -137,7 +143,7 @@ export function AppShell() {
       <div className="mx-auto flex w-full max-w-6xl">
         <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-56 shrink-0 flex-col border-r bg-muted/30 p-3 md:flex">
           <nav className="flex flex-col gap-1">
-            {[...PRIMARY_NAV, ...MORE_NAV].map((item) => (
+            {[...primaryNav, ...MORE_NAV].map((item) => (
               <SidebarLink key={item.to} item={item} />
             ))}
           </nav>
@@ -148,8 +154,52 @@ export function AppShell() {
         </main>
       </div>
 
-      <MobileNav />
+      <MobileNav items={primaryNav} />
     </div>
+  )
+}
+
+type BellNotification = {
+  id: string
+  channel: string
+  message: string | null
+  created_at: string | null
+}
+
+export function NotificationBell() {
+  const notifications = useQuery({
+    queryKey: ['notifications'],
+    queryFn: () => api.get<{ notifications: BellNotification[] }>('/notifications'),
+    refetchInterval: 60_000,
+  })
+  const rows = notifications.data?.notifications ?? []
+  const label = `Notifications (${rows.length})`
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={label} className="relative" />}>
+        <Bell className="size-4" />
+        {rows.length > 0 && (
+          <span className="absolute right-1 top-1 min-w-4 rounded-full bg-destructive px-1 text-[10px] leading-4 text-destructive-foreground">
+            {rows.length > 9 ? '9+' : rows.length}
+          </span>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {rows.length === 0 ? (
+          <DropdownMenuItem disabled>No notifications yet</DropdownMenuItem>
+        ) : rows.map((notification) => (
+          <DropdownMenuItem key={notification.id} className="items-start whitespace-normal">
+            <div className="space-y-1">
+              <p className="text-sm">{notification.message ?? `${notification.channel} notification`}</p>
+              {notification.created_at && <p className="text-xs text-muted-foreground">{new Date(notification.created_at).toLocaleString()}</p>}
+            </div>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -173,11 +223,11 @@ function SidebarLink({ item }: { item: NavItem }) {
   )
 }
 
-function MobileNav() {
+function MobileNav({ items }: { items: NavItem[] }) {
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)] md:hidden">
       <div className="grid h-16 grid-cols-5">
-        {PRIMARY_NAV.map((item) => (
+        {items.map((item) => (
           <MobileLink key={item.to} item={item} />
         ))}
         <MoreSheet />

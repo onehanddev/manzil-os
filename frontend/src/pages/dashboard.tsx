@@ -10,6 +10,8 @@ export function DashboardPage() {
   const { data: me, isLoading } = useMe()
   const currentSocietyId = useSocietyStore((s) => s.currentSocietyId)
   const current = me?.memberships?.find((m) => m.society.id === currentSocietyId)
+  const currentRoles = (current?.roles ?? []) as string[]
+  const isAdmin = me?.platform_admin === true || currentRoles.includes('super_admin') || currentRoles.includes('SOCIETY_ADMIN')
 
   return (
     <PagePlaceholder
@@ -34,7 +36,7 @@ export function DashboardPage() {
             { label: 'Expenses', icon: Wallet, to: '/expenses', hint: 'Record payments' },
             { label: 'Cashbook Report', icon: BarChart3, to: '/reports', hint: 'Opening → closing' },
             { label: 'Flats & Funds', icon: Building2, to: '/flats', hint: 'Master data' },
-          ].map((item) => {
+          ].filter((item) => item.to !== '/reports' || isAdmin).map((item) => {
             const Icon = item.icon
             return (
               <Card key={item.label} className="hover:bg-accent/50 transition-colors">

@@ -17,6 +17,8 @@ import { NotFoundPage } from '@/pages/not-found'
  */
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  // Alias for landing's "Open app" -> https://manzilos.vercel.app/app
+  { path: '/app', element: <Navigate to="/dashboard" replace /> },
   {
     element: (
       <RequireAuth>

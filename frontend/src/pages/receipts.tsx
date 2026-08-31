@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 
 type Flat = {
@@ -35,6 +36,21 @@ type Receipt = {
   payer_person_id?: string | null
   fund_id?: string | null
   collected_by?: string | null
+  receipt_number?: string | null
+  public_pdf_url?: string | null
+  whatsapp_status?: string | null
+  whatsapp_failure_reason?: string | null
+}
+
+const API_BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+
+function receiptPdfHref(receipt: Receipt) {
+  const href = receipt.public_pdf_url ?? `/api/receipts/${receipt.id}/pdf`
+  if (/^https?:\/\//.test(href) || !href.startsWith('/')) return href
+  if (!/^https?:\/\//.test(API_BASE)) return href
+  const apiUrl = new URL(API_BASE)
+  const apiRoot = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : apiUrl.origin
+  return `${apiRoot}${href}`
 }
 
 export function ReceiptsPage() {
@@ -163,6 +179,15 @@ export function ReceiptsPage() {
       toast.success('Receipt voided — history preserved')
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to void'),
+  })
+
+  const resendWhatsApp = useMutation({
+    mutationFn: (id: string) => api.post(`/receipts/${id}/whatsapp-resend`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['receipts'] })
+      toast.success('WhatsApp receipt queued')
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to resend WhatsApp'),
   })
 
   return (
@@ -345,16 +370,28 @@ export function ReceiptsPage() {
             <p className="text-sm text-muted-foreground">No receipts yet — submitted receipts appear here. Voided receipts remain in history (include_voided).</p>
           ) : (
             receipts.map((r) => (
-              <div key={r.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
+              <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                 <div>
+                  {r.receipt_number && <div className="text-xs font-semibold text-primary">{r.receipt_number}</div>}
                   <div className="text-sm font-medium">₹{r.amount} · {r.business_date} · {r.type}</div>
                   <div className="text-xs text-muted-foreground">{r.flat_id.slice(0, 8)} · {r.status} {r.narration ? `· ${r.narration}` : ''} · collector {r.collected_by?.slice(0, 8) ?? '—'}</div>
+                  <div className="text-xs text-muted-foreground">
+                    WhatsApp: {r.whatsapp_status ?? 'PENDING'}{r.whatsapp_failure_reason ? ` · ${r.whatsapp_failure_reason}` : ''}
+                  </div>
                   {r.status === 'VOIDED' && <div className="text-[11px] text-muted-foreground">Voided {r.voided_at?.slice(0, 16)} · {r.void_reason ?? 'no reason'}</div>}
                 </div>
                 {r.status !== 'VOIDED' ? (
-                  <Button variant="outline" size="sm" onClick={() => voidReceipt.mutate(r.id)} disabled={voidReceipt.isPending}>
-                    Undo
-                  </Button>
+                  <div className="flex flex-col items-end gap-2 sm:flex-row">
+                    <a className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))} href={receiptPdfHref(r)} target="_blank" rel="noreferrer">
+                      Download PDF
+                    </a>
+                    <Button variant="outline" size="sm" onClick={() => resendWhatsApp.mutate(r.id)} disabled={resendWhatsApp.isPending}>
+                      Resend WhatsApp
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => voidReceipt.mutate(r.id)} disabled={voidReceipt.isPending}>
+                      Undo
+                    </Button>
+                  </div>
                 ) : (
                   <span className="text-xs text-muted-foreground">History preserved</span>
                 )}

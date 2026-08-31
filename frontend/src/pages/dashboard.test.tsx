@@ -96,7 +96,25 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
 
     renderWithProviders(<DashboardPage />)
 
-    expect(screen.getByText('Lotus Divine')).toBeInTheDocument()
+    expect(screen.getByText(/Lotus Divine/)).toBeInTheDocument()
     expect(screen.getByText('Phase 0 scope')).toBeInTheDocument()
+  })
+
+  it('does not show the cashbook report entry point to collectors', () => {
+    const society = { id: 'soc-lotus-divine', name: 'Lotus Divine', location: 'Wadala', city: 'Mumbai' }
+    mockedUseMe.mockReturnValue({
+      data: {
+        user: { id: 'collector-1', display_name: 'Collector', mobile: '+91 90000 00001' },
+        memberships: [{ society, roles: ['collector'], permissions: ['receipt:create'] }],
+        platform_admin: false,
+      },
+      isLoading: false,
+    } as unknown as ReturnType<typeof useMe>)
+    useSocietyStore.getState().setCurrentSociety(society.id)
+
+    renderWithProviders(<DashboardPage />)
+
+    expect(screen.queryByText('Cashbook Report')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /reports/i })).not.toBeInTheDocument()
   })
 })

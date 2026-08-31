@@ -13,6 +13,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'service-worker.ts',
       registerType: 'autoUpdate',
       includeAssets: ['icons/*.png'],
       manifest: {

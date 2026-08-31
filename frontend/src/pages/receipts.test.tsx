@@ -62,4 +62,43 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
     await user.type(amountInput, '2000')
     expect(amountInput).toHaveValue('2000')
   })
+
+  it('shows official receipt number, PDF action, WhatsApp status, and resend action', async () => {
+    const user = userEvent.setup()
+    let resendCalled = false
+    server.use(
+      http.get('*/api/flats', () => HttpResponse.json({ flats: [] })),
+      http.get('*/api/funds', () => HttpResponse.json({ funds: [{ id: 'fund-main', name: 'Main Fund', is_active: true }] })),
+      http.get('*/api/receipts', () => HttpResponse.json({
+        receipts: [
+          {
+            id: 'receipt-13',
+            flat_id: 'flat-1010000',
+            amount: 1500,
+            business_date: '2026-04-02',
+            type: 'REGULAR',
+            status: 'POSTED',
+            receipt_number: 'MANZIL/26-27/00001',
+            public_pdf_url: '/receipts/receipt-13/pdf?token=public-token-13',
+            whatsapp_status: 'LOGGED',
+            whatsapp_failure_reason: null,
+            collected_by: 'membership-admin',
+          },
+        ],
+      })),
+      http.post('*/api/receipts/receipt-13/whatsapp-resend', () => {
+        resendCalled = true
+        return HttpResponse.json({ id: 'notif-13', status: 'LOGGED', provider_mode: 'test' }, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<ReceiptsPage />)
+
+    expect(await screen.findByText('MANZIL/26-27/00001')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Download PDF/i })).toHaveAttribute('href', 'http://localhost:8000/receipts/receipt-13/pdf?token=public-token-13')
+    expect(screen.getByText(/WhatsApp: LOGGED/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Resend WhatsApp/i }))
+    expect(resendCalled).toBe(true)
+  })
 })

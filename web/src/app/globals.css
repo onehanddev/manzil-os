@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist);
+  --font-display: var(--font-display);
+  --color-paper: #F7F5EF;
+  --color-paper-2: #EFEEE7;
+  --color-ink: #17201E;
+  --color-ink-muted: #65716D;
+  --color-teal: #176B63;
+  --color-teal-strong: #0E514B;
+  --color-amber: #D9952F;
+  --color-line: #DDE2DD;
+}
+
+:root {
+  --paper: #F7F5EF;
+  --ink: #17201E;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-geist), ui-sans-serif, -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* tabular numerals for money */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* paper grain */
+.paper-grain {
+  background-image:
+    radial-gradient(ellipse at 20% 30%, rgba(23,107,99,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(217,149,47,0.07) 0%, transparent 50%);
+}
