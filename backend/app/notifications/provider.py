@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 import uuid
+import json
+import urllib.error
+import urllib.request
 from abc import ABC, abstractmethod
 from datetime import date
 
@@ -32,6 +35,10 @@ class NotificationProvider(ABC):
         business_date: date,
         amount: float,
         narration: str | None,
+        receipt_number: str | None = None,
+        flat_number: str | None = None,
+        society_name: str | None = None,
+        pdf_url: str | None = None,
     ) -> Notification:
         ...
 
@@ -50,8 +57,12 @@ class TestNotificationProvider(NotificationProvider):
         business_date: date,
         amount: float,
         narration: str | None,
+        receipt_number: str | None = None,
+        flat_number: str | None = None,
+        society_name: str | None = None,
+        pdf_url: str | None = None,
     ) -> Notification:
-        msg = f"[test] receipt {receipt_id} flat {flat_id} amount {amount} narration={narration or ''}"
+        msg = f"[test] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount} narration={narration or ''} pdf={pdf_url or ''}"
         # stdout log for observability
         print(msg)
         n = Notification(
@@ -72,7 +83,7 @@ class TestNotificationProvider(NotificationProvider):
 
 
 class LiveWhatsAppProvider(NotificationProvider):
-    """Stub for production – real WhatsApp call will be added later. Same toggle interface."""
+    """Meta WhatsApp Cloud API sender for receipt utility templates."""
 
     def send_receipt_notification(
         self,
@@ -85,9 +96,59 @@ class LiveWhatsAppProvider(NotificationProvider):
         business_date: date,
         amount: float,
         narration: str | None,
+        receipt_number: str | None = None,
+        flat_number: str | None = None,
+        society_name: str | None = None,
+        pdf_url: str | None = None,
     ) -> Notification:
-        msg = f"[live-stub] receipt {receipt_id} would send WhatsApp to payer {payer_person_id}"
-        print(msg)
+        token = os.environ["WHATSAPP_TOKEN"]
+        phone_id = os.environ["WHATSAPP_PHONE_ID"]
+        template_name = os.environ["WHATSAPP_TEMPLATE_NAME"]
+        template_lang = os.environ.get("WHATSAPP_TEMPLATE_LANG", "en_US")
+        to_number = os.environ.get("WHATSAPP_TEST_TO", "")
+        msg = f"[live] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount}"
+        status = "SENT"
+        provider_message_id = None
+        failure_reason = None
+        body = {
+            "messaging_product": "whatsapp",
+            "to": to_number,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": template_lang},
+                "components": [
+                    {
+                        "type": "body",
+                        "parameters": [
+                            {"type": "text", "text": receipt_number or str(receipt_id)},
+                            {"type": "text", "text": flat_number or str(flat_id)},
+                            {"type": "text", "text": f"Rs. {amount:,.2f}"},
+                            {"type": "text", "text": business_date.isoformat()},
+                            {"type": "text", "text": society_name or "Society"},
+                        ],
+                    }
+                ],
+            },
+        }
+        if pdf_url:
+            body["template"]["components"].append(
+                {"type": "button", "sub_type": "url", "index": "0", "parameters": [{"type": "text", "text": pdf_url}]}
+            )
+        try:
+            req = urllib.request.Request(
+                f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8") or "{}")
+                provider_message_id = (data.get("messages") or [{}])[0].get("id")
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as error:
+            status = "FAILED"
+            failure_reason = str(error)
+            msg = f"{msg} failed: {failure_reason}"
         n = Notification(
             id=uuid.uuid4(),
             society_id=society_id,
@@ -96,8 +157,10 @@ class LiveWhatsAppProvider(NotificationProvider):
             flat_id=flat_id,
             channel="WHATSAPP",
             provider_mode="live",
-            status="LOGGED",
+            status=status,
             message=msg,
+            provider_message_id=provider_message_id,
+            failure_reason=failure_reason,
             business_date=business_date,
         )
         db.add(n)
@@ -107,7 +170,10 @@ class LiveWhatsAppProvider(NotificationProvider):
 
 def get_notification_provider() -> NotificationProvider:
     mode = os.environ.get("PROVIDER_MODE", "test").strip().lower()
-    if mode == "live":
+    has_whatsapp_credentials = all(
+        os.environ.get(key) for key in ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_TEMPLATE_NAME")
+    )
+    if mode == "live" and has_whatsapp_credentials:
         return LiveWhatsAppProvider()
     return TestNotificationProvider()
 

@@ -53,6 +53,7 @@ npm test                            # Vitest + RTL
 
 - `PHASE_0_PRD.md` — product destination and acceptance criteria.
 - `PHASE_0_ISSUES.md` — execution path as tracer-bullet issues. Work top-to-bottom.
+- `DESIGN.md` + `NATIVE_UI_GUIDE.md` — design tokens and native app shell rules. **Every frontend change must follow `NATIVE_UI_GUIDE.md`**: MobileSelect bottom drawer (not Select), NativeDateField calendar drawer (not browser date popover), bottom native toast, and tab + scroll containment (only the panel below tabs scrolls — not the whole page).
 - `CONTEXT.md` / ADRs in the area you are touching (if present) for domain language.
 - `backend/README.md` and `frontend/README.md` for stack and DB workflow.
 

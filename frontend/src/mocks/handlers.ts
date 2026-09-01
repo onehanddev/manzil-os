@@ -6,6 +6,8 @@ const societies: Society[] = [
   { id: 'soc-rose-valley', name: 'Rose Valley', location: 'Andheri West', city: 'Mumbai' },
 ]
 
+let idSequence = 0
+
 // In-memory MSW store for master data (Issue 4). Persists across requests in the
 // same browser session so Cypress can exercise create → list flows end-to-end.
 type FlatCategory = { id: string; society_id: string; name: string; is_active: boolean; maintenance_amount: number | null; size_sq_ft: number | null }
@@ -16,9 +18,11 @@ type OpeningDue = { flat_id: string; amount: number }
 type Fund = { id: string; society_id: string; name: string; is_active: boolean }
 type Vendor = { id: string; society_id: string; name: string; contact_info: string | null; is_active: boolean }
 type ExpenseCategory = { id: string; society_id: string; name: string; is_active: boolean }
-type Receipt = { id: string; society_id: string; flat_id: string; amount: number; business_date: string; type: string; status: string; voided_at?: string | null; void_reason?: string | null; fund_id?: string | null; payer_person_id?: string | null }
+type Receipt = { id: string; society_id: string; flat_id: string; amount: number; business_date: string; type: string; status: string; narration?: string | null; voided_at?: string | null; void_reason?: string | null; fund_id?: string | null; payer_person_id?: string | null }
+type Expense = { id: string; society_id: string; business_date: string; amount: number; fund_id: string | null; category_id: string; vendor_id: string | null; narration: string | null; created_by: string; created_at: string }
+type ReportRun = { id: string; from: string; to: string; opening: number; total_receipts: number; total_expenses: number; closing: number; generated_at: string; generated_by: string; format: 'xlsx' | 'pdf' }
 
-const store: {
+type MockStore = {
   categories: FlatCategory[]
   flats: Flat[]
   persons: Person[]
@@ -28,31 +32,59 @@ const store: {
   vendors: Vendor[]
   expenseCategories: ExpenseCategory[]
   receipts: Receipt[]
-} = {
-  categories: [
-    // Seed Main Fund / Sinking Fund equivalent for direct API parity with backend migration
-  ],
-  flats: [],
-  persons: [],
-  occupants: [],
-  openingDues: new Map(),
-  funds: [
-    { id: 'fund-main', society_id: societies[0].id, name: 'Main Fund', is_active: true },
-    { id: 'fund-sinking', society_id: societies[0].id, name: 'Sinking Fund', is_active: true },
-  ],
-  vendors: [],
-  expenseCategories: [
-    { id: 'exp-cat-electricity', society_id: societies[0].id, name: 'Electricity', is_active: true },
-    { id: 'exp-cat-salary', society_id: societies[0].id, name: 'Salary', is_active: true },
-    { id: 'exp-cat-cleaning', society_id: societies[0].id, name: 'Cleaning', is_active: true },
-    { id: 'exp-cat-lift', society_id: societies[0].id, name: 'Lift', is_active: true },
-    { id: 'exp-cat-repair', society_id: societies[0].id, name: 'Repair', is_active: true },
-  ],
-  receipts: [],
+  expenses: Expense[]
+  cashOpenings: Map<string, number>
+  reportRuns: ReportRun[]
+}
+
+function createInitialStore(): MockStore {
+  return {
+    categories: [],
+    flats: [],
+    persons: [],
+    occupants: [],
+    openingDues: new Map(),
+    funds: [
+      { id: 'fund-main', society_id: societies[0].id, name: 'Main Fund', is_active: true },
+      { id: 'fund-sinking', society_id: societies[0].id, name: 'Sinking Fund', is_active: true },
+    ],
+    vendors: [],
+    expenseCategories: [
+      { id: 'exp-cat-electricity', society_id: societies[0].id, name: 'Electricity', is_active: true },
+      { id: 'exp-cat-salary', society_id: societies[0].id, name: 'Salary', is_active: true },
+      { id: 'exp-cat-cleaning', society_id: societies[0].id, name: 'Cleaning', is_active: true },
+      { id: 'exp-cat-lift', society_id: societies[0].id, name: 'Lift', is_active: true },
+      { id: 'exp-cat-repair', society_id: societies[0].id, name: 'Repair', is_active: true },
+    ],
+    receipts: [],
+    expenses: [],
+    cashOpenings: new Map(),
+    reportRuns: [],
+  }
+}
+
+const store = createInitialStore()
+
+export function resetMockData() {
+  const fresh = createInitialStore()
+  store.categories = fresh.categories
+  store.flats = fresh.flats
+  store.persons = fresh.persons
+  store.occupants = fresh.occupants
+  store.openingDues = fresh.openingDues
+  store.funds = fresh.funds
+  store.vendors = fresh.vendors
+  store.expenseCategories = fresh.expenseCategories
+  store.receipts = fresh.receipts
+  store.expenses = fresh.expenses
+  store.cashOpenings = fresh.cashOpenings
+  store.reportRuns = fresh.reportRuns
+  idSequence = 0
 }
 
 function genId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`
+  idSequence += 1
+  return `${prefix}-${idSequence.toString().padStart(4, '0')}`
 }
 
 function enrichFlat(f: Flat) {
@@ -87,6 +119,10 @@ function enrichFlat(f: Flat) {
 }
 
 export const handlers = [
+  http.post('*/__mock/reset', () => {
+    resetMockData()
+    return HttpResponse.json({ ok: true })
+  }),
   http.get('*/api/me', () =>
     HttpResponse.json<MeResponse>({
       user: { id: 'user-dev', display_name: 'Dev User', mobile: '+91 99999 99999' },
@@ -338,6 +374,54 @@ export const handlers = [
     return HttpResponse.json(cat, { status: 201 })
   }),
 
+  // ---- Expenses (cash-only) ----
+  http.get('*/api/expenses', ({ request }) => {
+    const url = new URL(request.url)
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
+    const cat = url.searchParams.get('category_id')
+    const ven = url.searchParams.get('vendor_id')
+    const fund = url.searchParams.get('fund_id')
+    let list = [...store.expenses]
+    if (from) list = list.filter((e) => e.business_date >= from)
+    if (to) list = list.filter((e) => e.business_date <= to)
+    if (cat) list = list.filter((e) => e.category_id === cat)
+    if (ven) list = list.filter((e) => e.vendor_id === ven)
+    if (fund) list = list.filter((e) => e.fund_id === fund)
+    return HttpResponse.json({ expenses: list })
+  }),
+  http.post('*/api/expenses', async ({ request }) => {
+    const body = (await request.json()) as { business_date?: string; amount?: number; fund_id?: string; category_id?: string; vendor_name?: string; vendor_id?: string; narration?: string; payment_method?: string }
+    if (body.payment_method && body.payment_method.toUpperCase() !== 'CASH') return HttpResponse.json({ detail: 'payment_method must be CASH' }, { status: 422 })
+    if (!body.business_date || body.amount == null || !body.fund_id || !body.category_id) return HttpResponse.json({ detail: 'business_date, amount, fund_id, category_id required' }, { status: 422 })
+    if (body.amount <= 0) return HttpResponse.json({ detail: 'amount must be > 0' }, { status: 422 })
+    let vendorId: string | null = (body.vendor_id as string) ?? null
+    const vname = (body.vendor_name ?? '').trim()
+    if (!vendorId && vname) {
+      const existing = store.vendors.find((v) => v.name.toLowerCase() === vname.toLowerCase())
+      if (existing) vendorId = existing.id
+      else {
+        const nv: Vendor = { id: genId('vendor'), society_id: societies[0].id, name: vname, contact_info: null, is_active: true }
+        store.vendors.push(nv)
+        vendorId = nv.id
+      }
+    }
+    const expense: Expense = {
+      id: genId('exp'),
+      society_id: societies[0].id,
+      business_date: body.business_date,
+      amount: body.amount,
+      fund_id: body.fund_id,
+      category_id: body.category_id,
+      vendor_id: vendorId,
+      narration: (body.narration ?? '').trim() || null,
+      created_by: 'membership-1',
+      created_at: new Date().toISOString(),
+    }
+    store.expenses.push(expense)
+    return HttpResponse.json(expense, { status: 201 })
+  }),
+
   // ---- Receipts (directly POSTED, undo via void with history) ----
   http.get('*/api/receipts', ({ request }) => {
     const url = new URL(request.url)
@@ -380,6 +464,7 @@ export const handlers = [
       business_date: body.business_date,
       type: (body.type ?? 'REGULAR').toUpperCase(),
       status: 'POSTED',
+      narration: (body.narration ?? '').trim() || null,
       voided_at: null,
       void_reason: null,
       fund_id: body.fund_id,
@@ -398,6 +483,10 @@ export const handlers = [
     r.voided_at = new Date().toISOString()
     r.void_reason = body.reason ?? null
     return HttpResponse.json(r)
+  }),
+  http.get('*/api/expenses/:expenseId', ({ params }) => {
+    const expense = store.expenses.find((row) => row.id === params.expenseId)
+    return expense ? HttpResponse.json(expense) : HttpResponse.json({ detail: 'Expense not found' }, { status: 404 })
   }),
   http.post('*/api/receipts/:receiptId/undo', async ({ params, request }) => {
     const { receiptId } = params as { receiptId: string }
@@ -429,6 +518,87 @@ export const handlers = [
         created_at: new Date().toISOString(),
       }))
     return HttpResponse.json({ notifications: notifs })
+  }),
+
+  // ---- Cash opening balance + report (T2) ----
+  http.get('*/api/cash-opening-balance', ({ request }) => {
+    const url = new URL(request.url)
+    const d = url.searchParams.get('date')
+    if (!d) {
+      if (store.cashOpenings.size === 0) return HttpResponse.json({ society_id: societies[0].id, opening_date: null, amount: 0, exists: false })
+      const latest = [...store.cashOpenings.entries()].sort((a, b) => b[0].localeCompare(a[0]))[0]
+      return HttpResponse.json({ society_id: societies[0].id, opening_date: latest[0], amount: latest[1], exists: true })
+    }
+    const exists = store.cashOpenings.has(d)
+    const amt = store.cashOpenings.get(d) ?? 0
+    return HttpResponse.json({ society_id: societies[0].id, opening_date: d, amount: amt, exists })
+  }),
+  http.put('*/api/cash-opening-balance', async ({ request }) => {
+    const body = (await request.json()) as { opening_date?: string; amount?: number }
+    if (!body.opening_date || body.amount == null || Number(body.amount) < 0) return HttpResponse.json({ detail: 'amount must be >= 0' }, { status: 422 })
+    store.cashOpenings.set(body.opening_date, Number(body.amount))
+    return HttpResponse.json({ society_id: societies[0].id, opening_date: body.opening_date, amount: Number(body.amount), exists: true })
+  }),
+  http.get('*/api/reports/cashbook', ({ request }) => {
+    const url = new URL(request.url)
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
+    if (!from || !to) return HttpResponse.json({ detail: 'from and to required' }, { status: 422 })
+    if (from > to) return HttpResponse.json({ detail: 'from must be <= to' }, { status: 400 })
+    const opening = store.cashOpenings.get(from) ?? 0
+    const receipts = store.receipts.filter((r) => r.status !== 'VOIDED' && r.business_date >= from && r.business_date <= to).sort((a, b) => a.business_date.localeCompare(b.business_date)).map((receipt) => ({
+      ...receipt,
+      flat: { id: receipt.flat_id, flat_number: store.flats.find((flat) => flat.id === receipt.flat_id)?.flat_number ?? receipt.flat_id },
+      fund: receipt.fund_id ? { id: receipt.fund_id, name: store.funds.find((fund) => fund.id === receipt.fund_id)?.name ?? receipt.fund_id } : null,
+    }))
+    const expenses = store.expenses.filter((e) => e.business_date >= from && e.business_date <= to).sort((a, b) => a.business_date.localeCompare(b.business_date)).map((expense) => ({
+      ...expense,
+      category: { id: expense.category_id, name: store.expenseCategories.find((category) => category.id === expense.category_id)?.name ?? expense.category_id },
+      vendor: expense.vendor_id ? { id: expense.vendor_id, name: store.vendors.find((vendor) => vendor.id === expense.vendor_id)?.name ?? expense.vendor_id } : null,
+      fund: expense.fund_id ? { id: expense.fund_id, name: store.funds.find((fund) => fund.id === expense.fund_id)?.name ?? expense.fund_id } : null,
+    }))
+    const totalReceipts = receipts.reduce((s, r) => s + r.amount, 0)
+    const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
+    const closing = opening + totalReceipts - totalExpenses
+    const format = url.searchParams.get('format')
+    if (format === 'xlsx' || format === 'pdf') {
+      const run = {
+        id: genId('report-run'),
+        from,
+        to,
+        opening,
+        total_receipts: totalReceipts,
+        total_expenses: totalExpenses,
+        closing,
+        generated_at: new Date().toISOString(),
+        generated_by: 'mock-admin-membership',
+        format,
+      } as ReportRun
+      const existing = store.reportRuns.findIndex((saved) => saved.from === from && saved.to === to)
+      if (existing >= 0) store.reportRuns[existing] = run
+      else store.reportRuns.unshift(run)
+      return new HttpResponse(format === 'pdf' ? '%PDF-mock' : 'mock-xlsx', {
+        headers: {
+          'Content-Disposition': `attachment; filename=cashbook-report.${format}`,
+          'Content-Type': format === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        },
+      })
+    }
+    return HttpResponse.json({
+      society: { id: societies[0].id, name: societies[0].name },
+      from,
+      to,
+      opening,
+      total_receipts: totalReceipts,
+      total_expenses: totalExpenses,
+      closing,
+      receipts,
+      expenses,
+    })
+  }),
+  http.get('*/api/reports/history', ({ request }) => {
+    const page = Math.max(1, Number(new URL(request.url).searchParams.get('page') ?? 1))
+    return HttpResponse.json({ runs: store.reportRuns.slice((page - 1) * 10, page * 10), page, page_size: 10, total: store.reportRuns.length })
   }),
 
   // Health (proxied via /api prefix in dev, but MSW bypasses actual backend health)

@@ -1,18 +1,47 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  ArrowDownLeft,
+  Building2,
+  ChevronRight,
+  Download,
+  Plus,
+  Printer,
+  Search,
+  UserRound,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api/client'
+import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet'
-import { useAuthStore } from '@/stores/auth-store'
+import { MobileSelect } from '@/components/ui/mobile-select'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 
-type FlatCategory = { id: string; name: string; is_active: boolean; size_sq_ft?: number | null; maintenance_amount?: number | null }
-type OccupantPerson = { id: string; name: string; mobile: string; email?: string | null }
+type FlatCategory = {
+  id: string
+  name: string
+  is_active: boolean
+  maintenance_amount?: number | null
+}
+
+type Person = {
+  id: string
+  name: string
+  mobile: string
+  alt_mobile?: string | null
+}
+
 type Flat = {
   id: string
   flat_number: string
@@ -22,17 +51,14 @@ type Flat = {
   category_maintenance_amount?: number | null
   flat_category?: { id: string; name: string; maintenance_amount?: number | null } | null
   category?: { id: string; name: string } | null
-  owner?: OccupantPerson | null
-  tenant?: OccupantPerson | null
-  occupants?: { occupant_id: string; person: OccupantPerson | null; role: string; is_active: boolean }[]
-  default_payer?: { person: OccupantPerson | null; role: string | null } | null
-  default_payer_person_id?: string | null
-  default_payer_role?: string | null
+  owner?: Person | null
+  tenant?: Person | null
+  default_payer?: { person: Person | null; role: string | null } | null
   opening_due?: number | null
   total_paid?: number | null
   current_due?: number | null
 }
-type Person = { id: string; name: string; mobile: string; alt_mobile?: string | null }
+
 type LedgerEntry = {
   id?: string
   type: string
@@ -40,8 +66,8 @@ type LedgerEntry = {
   amount: number
   narration?: string | null
   running_due: number
-  current_due?: number
 }
+
 type LedgerResponse = {
   flat_id: string
   flat_number: string
@@ -49,529 +75,573 @@ type LedgerResponse = {
   total_paid: number
   current_due: number
   entries: LedgerEntry[]
-  default_payer?: OccupantPerson | null
 }
 
-function useCategories() {
-  return useQuery({
-    queryKey: ['flat-categories'],
-    queryFn: () => api.get<{ categories: FlatCategory[] }>('/flat-categories'),
+const money = new Intl.NumberFormat('en-IN', {
+  style: 'currency',
+  currency: 'INR',
+  maximumFractionDigits: 0,
+})
+
+function formatMoney(value: number | null | undefined) {
+  return money.format(value ?? 0)
+}
+
+function formatDate(value: string | null) {
+  if (!value) return 'Opening balance'
+  return new Date(`${value}T12:00:00`).toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
   })
 }
 
-function useFlats() {
-  return useQuery({
-    queryKey: ['flats'],
-    queryFn: () => api.get<{ flats: Flat[] }>('/flats?with_dues=true'),
-  })
+function friendlyLedgerType(type: string) {
+  if (type === 'OPENING') return 'Opening due'
+  if (type === 'ARREARS') return 'Arrears receipt'
+  if (type === 'PART') return 'Part receipt'
+  if (type === 'ADVANCE') return 'Advance receipt'
+  return 'Maintenance receipt'
 }
 
-function usePersons() {
-  return useQuery({
-    queryKey: ['persons'],
-    queryFn: () => api.get<{ persons: Person[] }>('/persons'),
-  })
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof ApiError ? error.message : fallback
 }
 
 export function FlatsPage() {
-  const qc = useQueryClient()
-  const { data: catData, isLoading: catLoading, error: catError } = useCategories()
-  const { data: flatData, isLoading: flatLoading } = useFlats()
-  const { data: personData } = usePersons()
-
-  const categories = catData?.categories ?? []
-  const flats = flatData?.flats ?? []
-  const persons = personData?.persons ?? []
-
-  // category form
-  const [catName, setCatName] = useState('')
-  const [catMaintenanceAmount, setCatMaintenanceAmount] = useState('')
-  const createCat = useMutation({
-    mutationFn: () => {
-      const payload: Record<string, unknown> = { name: catName }
-      const trimmed = catMaintenanceAmount.trim()
-      if (trimmed !== '') {
-        const num = Number(trimmed)
-        if (!Number.isNaN(num)) payload.maintenance_amount = num
-      }
-      return api.post<FlatCategory>('/flat-categories', payload)
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['flat-categories'] })
-      setCatName('')
-      setCatMaintenanceAmount('')
-      toast.success('Category created')
-    },
-    onError: (e: unknown) => {
-      const msg = e instanceof ApiError ? e.message : 'Failed to create category'
-      toast.error(msg)
-    },
-  })
-
-  const toggleCat = useMutation({
-    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
-      api.patch<FlatCategory>(`/flat-categories/${id}`, { is_active }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['flat-categories'] })
-      toast.success('Category updated')
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed'),
-  })
-
-  // flat form
+  const queryClient = useQueryClient()
+  const [query, setQuery] = useState('')
+  const [selectedFlatId, setSelectedFlatId] = useState<string | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
   const [flatNumber, setFlatNumber] = useState('')
-  const [flatCatId, setFlatCatId] = useState('')
+  const [flatCategoryId, setFlatCategoryId] = useState('')
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [occupantRole, setOccupantRole] = useState<'OWNER' | 'TENANT' | null>(null)
+  const [occupantPersonId, setOccupantPersonId] = useState('')
+  const [occupantError, setOccupantError] = useState<string | null>(null)
+  const [openingDueOpen, setOpeningDueOpen] = useState(false)
+  const [openingDueAmount, setOpeningDueAmount] = useState('')
+  const [openingDueError, setOpeningDueError] = useState<string | null>(null)
+
+  const categoriesQuery = useQuery({
+    queryKey: ['flat-categories'],
+    queryFn: () => api.get<{ categories: FlatCategory[] }>('/flat-categories'),
+  })
+  const flatsQuery = useQuery({
+    queryKey: ['flats', { withDues: true }],
+    queryFn: () => api.get<{ flats: Flat[] }>('/flats?with_dues=true'),
+  })
+  const personsQuery = useQuery({
+    queryKey: ['persons'],
+    queryFn: () => api.get<{ persons: Person[] }>('/persons'),
+  })
+
+  const categories = categoriesQuery.data?.categories ?? []
+  const flats = flatsQuery.data?.flats ?? []
+  const persons = personsQuery.data?.persons ?? []
+  const selectedFlat = flats.find((flat) => flat.id === selectedFlatId) ?? null
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredFlats = useMemo(() => flats.filter((flat) => {
+    if (!normalizedQuery) return true
+    return [
+      flat.flat_number,
+      flat.category?.name,
+      flat.flat_category?.name,
+      flat.owner?.name,
+      flat.tenant?.name,
+    ].some((value) => value?.toLowerCase().includes(normalizedQuery))
+  }), [flats, normalizedQuery])
+
+  const ledgerQuery = useQuery({
+    queryKey: ['flat-ledger', selectedFlatId],
+    queryFn: () => api.get<LedgerResponse>(`/flats/${selectedFlatId}/ledger`),
+    enabled: Boolean(selectedFlatId),
+  })
+
   const createFlat = useMutation({
-    mutationFn: () => api.post<Flat>('/flats', { flat_number: flatNumber, flat_category_id: flatCatId }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['flats'] })
+    mutationFn: () => api.post<Flat>('/flats', {
+      flat_number: flatNumber.trim(),
+      flat_category_id: flatCategoryId,
+    }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['flats'] })
+      setCreateOpen(false)
       setFlatNumber('')
-      setFlatCatId('')
+      setFlatCategoryId('')
+      setCreateError(null)
       toast.success('Flat created')
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to create flat'),
+    onError: (error: unknown) => setCreateError(errorMessage(error, 'Flat could not be created. Try again.')),
   })
 
-  // person form
-  const [personName, setPersonName] = useState('')
-  const [personMobile, setPersonMobile] = useState('')
-  const [personAlt, setPersonAlt] = useState('')
-  const createPerson = useMutation({
-    mutationFn: () => api.post<Person>('/persons', { name: personName, mobile: personMobile, alt_mobile: personAlt || undefined }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['persons'] })
-      setPersonName('')
-      setPersonMobile('')
-      setPersonAlt('')
-      toast.success('Contact created')
+  const assignOccupant = useMutation({
+    mutationFn: () => api.post(`/flats/${selectedFlatId}/occupants`, {
+      person_id: occupantPersonId,
+      role: occupantRole,
+    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['flats'] }),
+        queryClient.invalidateQueries({ queryKey: ['flat-ledger', selectedFlatId] }),
+      ])
+      setOccupantRole(null)
+      setOccupantPersonId('')
+      setOccupantError(null)
+      toast.success('Occupant added')
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed'),
+    onError: (error: unknown) => setOccupantError(errorMessage(error, 'Occupant could not be added. Try again.')),
   })
 
-  // occupant assignment
-  const [occFlatId, setOccFlatId] = useState('')
-  const [occPersonId, setOccPersonId] = useState('')
-  const [occRole, setOccRole] = useState<'OWNER' | 'TENANT'>('OWNER')
-  const assignOcc = useMutation({
-    mutationFn: () => api.post(`/flats/${occFlatId}/occupants`, { person_id: occPersonId, role: occRole }),
-    onSuccess: () => toast.success(`Assigned ${occRole}`),
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to assign'),
+  const updateOpeningDue = useMutation({
+    mutationFn: () => api.put(`/flats/${selectedFlatId}/opening-due`, {
+      amount: Number(openingDueAmount),
+    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['flats'] }),
+        queryClient.invalidateQueries({ queryKey: ['flat-ledger', selectedFlatId] }),
+      ])
+      setOpeningDueOpen(false)
+      setOpeningDueError(null)
+      toast.success('Opening due updated')
+    },
+    onError: (error: unknown) => setOpeningDueError(errorMessage(error, 'Opening due could not be updated. Try again.')),
   })
 
-  // opening due
-  const [odFlatId, setOdFlatId] = useState('')
-  const [odAmount, setOdAmount] = useState('')
-  const [odCurrent, setOdCurrent] = useState<number | null>(null)
-  const fetchOd = async () => {
-    if (!odFlatId) return
-    try {
-      const res = await api.get<{ amount: number }>(`/flats/${odFlatId}/opening-due`)
-      setOdCurrent(res.amount)
-    } catch {
-      setOdCurrent(null)
-    }
+  const openOccupantSheet = (role: 'OWNER' | 'TENANT') => {
+    setOccupantPersonId('')
+    setOccupantError(null)
+    setOccupantRole(role)
   }
-  const putOd = useMutation({
-    mutationFn: () => api.put<{ amount: number }>(`/flats/${odFlatId}/opening-due`, { amount: Number(odAmount) }),
-    onSuccess: (data) => {
-      setOdCurrent(data.amount)
-      toast.success(`Opening due set to ${data.amount}`)
-    },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed'),
-  })
 
-  // ledger drawer
-  const [ledgerFlatId, setLedgerFlatId] = useState<string | null>(null)
-  const { data: ledgerData, isLoading: ledgerLoading } = useQuery({
-    queryKey: ['flat-ledger', ledgerFlatId],
-    queryFn: () => api.get<LedgerResponse>(`/flats/${ledgerFlatId}/ledger`),
-    enabled: !!ledgerFlatId,
-  })
+  const openOpeningDueSheet = () => {
+    setOpeningDueAmount(String(selectedFlat?.opening_due ?? 0))
+    setOpeningDueError(null)
+    setOpeningDueOpen(true)
+  }
 
   const handleDownloadExcel = async () => {
     try {
       const token = useAuthStore.getState().accessToken
       const base = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
-      const res = await fetch(`${base}/reports/flat-dues.xlsx`, {
+      const response = await fetch(`${base}/reports/flat-dues.xlsx`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
-      if (!res.ok) throw new Error(`Download failed (${res.status})`)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'flat-dues.xlsx'
-      a.click()
+      if (!response.ok) throw new Error('Dues export could not be downloaded')
+      const url = URL.createObjectURL(await response.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'flat-dues.xlsx'
+      anchor.click()
       URL.revokeObjectURL(url)
-      toast.success('Excel downloaded')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Download failed')
+      toast.success('Dues exported')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Dues export could not be downloaded')
     }
   }
 
-  // default payer preview
-  const [dpFlatId, setDpFlatId] = useState('')
-  const [dpResult, setDpResult] = useState<string | null>(null)
-  const fetchDp = async () => {
-    if (!dpFlatId) return
-    try {
-      const res = await api.get<{ person_id: string; role: string }>(`/flats/${dpFlatId}/default-payer`)
-      setDpResult(`${res.role}: ${res.person_id}`)
-    } catch (e) {
-      setDpResult(e instanceof ApiError ? e.message : 'Not found')
-    }
-  }
-
-  if (catError instanceof ApiError && catError.status === 403) {
+  if (flatsQuery.error instanceof ApiError && flatsQuery.error.status === 403) {
     return (
       <div className="mx-auto max-w-md p-6 text-center">
-        <p className="text-sm text-muted-foreground">Collector access is restricted. Master data is admin-only.</p>
+        <p className="text-sm text-muted-foreground">Flats and setup are available to administrators only.</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Flats &amp; Master Data</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Categories, flats, contacts, and opening dues — mobile-first.</p>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-2xl font-semibold tracking-tight">Flats</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Occupants, maintenance defaults, dues, and ledger.</p>
+        </div>
+        <Button className="min-h-12 shrink-0" onClick={() => { setCreateError(null); setCreateOpen(true) }}>
+          <Plus className="size-4" />
+          Add flat
+        </Button>
       </div>
 
-      <Tabs defaultValue="categories">
-        <TabsList className="w-full justify-start overflow-x-auto">
-          <TabsTrigger value="categories">Categories</TabsTrigger>
-          <TabsTrigger value="flats">Flats</TabsTrigger>
-          <TabsTrigger value="persons">POCs</TabsTrigger>
-          <TabsTrigger value="opening">Opening Dues</TabsTrigger>
-        </TabsList>
+      <div className="flex gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            aria-label="Search flats"
+            placeholder="Search flat or occupant"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            className="min-h-12 pl-9"
+          />
+        </div>
+        <Button variant="outline" className="min-h-12 shrink-0" onClick={handleDownloadExcel} aria-label="Export dues">
+          <Download className="size-4" />
+          <span className="hidden sm:inline">Export dues</span>
+        </Button>
+      </div>
 
-        <TabsContent value="categories" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Create flat category</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label htmlFor="cat-name">Category name</Label>
-                <Input id="cat-name" placeholder="e.g. 3 BHK" value={catName} onChange={(e) => setCatName(e.target.value)} className="flex-1" />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="cat-maintenance">Maintenance amount</Label>
-                <Input
-                  id="cat-maintenance"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="e.g. 1500 (leave empty for no default)"
-                  value={catMaintenanceAmount}
-                  onChange={(e) => setCatMaintenanceAmount(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">Optional default used to prefill receipt amount. Leave empty if no default.</p>
-              </div>
-              <Button onClick={() => createCat.mutate()} disabled={!catName.trim() || createCat.isPending} className="w-full">
-                {createCat.isPending ? '…' : 'Create category'}
-              </Button>
-            </CardContent>
-          </Card>
+      {flatsQuery.isLoading ? (
+        <div role="status" aria-label="Loading flats" className="space-y-3">
+          {[0, 1, 2].map((item) => <Skeleton key={item} className="h-20 w-full rounded-xl" />)}
+        </div>
+      ) : flatsQuery.isError ? (
+        <div role="alert" className="rounded-2xl border border-destructive/30 bg-destructive/10 p-4">
+          <p className="font-medium text-destructive">Flats could not be loaded</p>
+          <p className="mt-1 text-sm text-muted-foreground">Check your connection and try again.</p>
+          <Button variant="outline" className="mt-3 min-h-11" onClick={() => flatsQuery.refetch()}>Try again</Button>
+        </div>
+      ) : filteredFlats.length === 0 ? (
+        <div className="rounded-2xl border border-dashed bg-muted/20 p-8 text-center">
+          <Building2 className="mx-auto size-8 text-muted-foreground" />
+          <p className="mt-3 font-medium">{flats.length === 0 ? 'No flats yet' : 'No flats match your search'}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {flats.length === 0 ? 'Add the first flat to begin occupant and due setup.' : 'Try a flat number, category, or occupant name.'}
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-2xl border bg-card">
+          {filteredFlats.map((flat, index) => {
+            const maintenanceAmount = flat.maintenance_amount
+              ?? flat.category_maintenance_amount
+              ?? flat.flat_category?.maintenance_amount
+            const occupant = flat.tenant ?? flat.owner
+            const due = flat.current_due ?? 0
+            return (
+              <button
+                key={flat.id}
+                type="button"
+                onClick={() => setSelectedFlatId(flat.id)}
+                className={`flex min-h-[76px] w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 active:scale-[0.99] ${index > 0 ? 'border-t' : ''}`}
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 font-semibold text-primary">
+                  {flat.flat_number.slice(0, 2)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="font-semibold">{flat.flat_number}</span>
+                    {!flat.is_active && <StatusBadge label="Inactive" />}
+                  </span>
+                  <span className="mt-0.5 block truncate text-sm text-muted-foreground">
+                    {flat.flat_category?.name ?? flat.category?.name ?? 'No category'}
+                    {maintenanceAmount != null ? ` · ${formatMoney(maintenanceAmount)} default` : ''}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    {occupant?.name ?? 'No occupant'}
+                  </span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span className="block font-semibold tabular-nums">{formatMoney(Math.abs(due))}</span>
+                  <span className="text-xs text-muted-foreground">{due < 0 ? 'Advance' : due > 0 ? 'Due' : 'Clear'}</span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              </button>
+            )
+          })}
+        </div>
+      )}
 
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Categories</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
-              {catLoading ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              ) : categories.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
-                  <p className="text-sm font-medium">No categories yet</p>
-                  <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                    Create your first flat category above — the maintenance amount will prefill receipt amounts.
-                  </p>
-                </div>
-              ) : (
-                categories.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                    <div>
-                      <div className="text-sm font-medium">{c.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {c.is_active ? 'Active' : 'Inactive'} ·{' '}
-                        {c.maintenance_amount != null ? `₹${c.maintenance_amount} default` : 'No default'}
-                      </div>
-                      {c.maintenance_amount != null && <div className="text-xs font-medium">{c.maintenance_amount}</div>}
-                    </div>
-                    <div className="flex flex-col items-end gap-1">
-                      {c.maintenance_amount != null && <span className="text-xs">₹{c.maintenance_amount}</span>}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => toggleCat.mutate({ id: c.id, is_active: !c.is_active })}
-                      >
-                        {c.is_active ? 'Deactivate' : 'Activate'}
-                      </Button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+      <FlatDetailSheet
+        flat={selectedFlat}
+        ledger={ledgerQuery.data}
+        ledgerLoading={ledgerQuery.isLoading}
+        ledgerError={ledgerQuery.isError}
+        onClose={() => setSelectedFlatId(null)}
+        onAddOwner={() => openOccupantSheet('OWNER')}
+        onAddTenant={() => openOccupantSheet('TENANT')}
+        onEditOpeningDue={openOpeningDueSheet}
+      />
 
-        <TabsContent value="flats" className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Create flat</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="flat-number">Flat number</Label>
-                  <Input id="flat-number" placeholder="e.g. A-101" value={flatNumber} onChange={(e) => setFlatNumber(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label>Category</Label>
-                  <Select value={flatCatId} onValueChange={(v) => setFlatCatId(v ?? '')}>
-                    <SelectTrigger data-testid="create-flat-category-select"><SelectValue placeholder="Select category">{categories.find((c) => c.id === flatCatId)?.name ?? undefined}</SelectValue></SelectTrigger>
-                    <SelectContent>
-                      {categories.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name} {c.maintenance_amount != null ? `(₹${c.maintenance_amount})` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <Button onClick={() => createFlat.mutate()} disabled={!flatNumber.trim() || !flatCatId || createFlat.isPending} className="w-full">
-                {createFlat.isPending ? 'Creating…' : 'Create flat'}
-              </Button>
-            </CardContent>
-          </Card>
+      <FormSheet
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        title="Add flat"
+        description="Create a flat and assign its maintenance category."
+        footer={(
+          <Button
+            className="min-h-12 w-full"
+            disabled={!flatNumber.trim() || !flatCategoryId || createFlat.isPending}
+            onClick={() => createFlat.mutate()}
+          >
+            {createFlat.isPending ? 'Creating flat…' : 'Create flat'}
+          </Button>
+        )}
+      >
+        {createError && <InlineError message={createError} />}
+        <div className="space-y-2">
+          <Label htmlFor="flat-number">Flat number</Label>
+          <Input id="flat-number" className="min-h-12" placeholder="A-101" value={flatNumber} onChange={(event) => setFlatNumber(event.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="flat-category">Category</Label>
+          <MobileSelect
+            id="flat-category"
+            value={flatCategoryId}
+            onValueChange={setFlatCategoryId}
+            options={categories.filter((category) => category.is_active).map((category) => ({
+              value: category.id,
+              label: category.name,
+              description: category.maintenance_amount != null ? `${formatMoney(category.maintenance_amount)} default` : undefined,
+            }))}
+            label="Category"
+            ariaLabel="Category"
+            placeholder="Choose category"
+            searchable
+          />
+        </div>
+      </FormSheet>
 
-          <div className="flex justify-end">
-            <Button variant="outline" size="sm" onClick={handleDownloadExcel} data-testid="download-excel-btn">
-              Download Excel
-            </Button>
+      <FormSheet
+        open={Boolean(occupantRole)}
+        onOpenChange={(open) => !open && setOccupantRole(null)}
+        title={`Add ${occupantRole === 'TENANT' ? 'tenant' : 'owner'}`}
+        description={`Choose a person for ${selectedFlat?.flat_number ?? 'this flat'}. The tenant is the default payer when present.`}
+        footer={(
+          <Button
+            className="min-h-12 w-full"
+            disabled={!occupantPersonId || assignOccupant.isPending}
+            onClick={() => assignOccupant.mutate()}
+          >
+            {assignOccupant.isPending ? 'Adding occupant…' : `Add ${occupantRole === 'TENANT' ? 'tenant' : 'owner'}`}
+          </Button>
+        )}
+      >
+        {occupantError && <InlineError message={occupantError} />}
+        {personsQuery.isError ? (
+          <InlineError message="People could not be loaded. Close this sheet and try again." />
+        ) : (
+          <div className="space-y-2">
+            <Label htmlFor="occupant-person">Person</Label>
+            <MobileSelect
+              id="occupant-person"
+              value={occupantPersonId}
+              onValueChange={setOccupantPersonId}
+              options={persons.map((person) => ({ value: person.id, label: person.name, description: person.mobile }))}
+              label="Person"
+              ariaLabel="Person"
+              placeholder="Choose person"
+              searchable
+            />
+            {persons.length === 0 && <p className="text-sm text-muted-foreground">Add a person from More, then return here to assign them.</p>}
           </div>
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Flats — Current Due (advance = minus)</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
-              {flatLoading ? (
-                <p className="text-sm text-muted-foreground">Loading…</p>
-              ) : flats.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
-                  <p className="text-sm font-medium">No flats yet</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Create a flat above — assign a category and occupants to track dues.</p>
-                </div>
-              ) : flats.map((f) => {
-                  const mAmt = f.maintenance_amount ?? f.category_maintenance_amount ?? f.flat_category?.maintenance_amount
-                const due = f.current_due ?? 0
-                const isAdvance = due < 0
-                return (
-                  <div key={f.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{f.flat_number}</span>
-                        <span className={`text-xs font-semibold ${isAdvance ? 'text-emerald-600' : due > 0 ? 'text-red-600' : 'text-muted-foreground'}`}>
-                          ₹{due} {isAdvance ? '(advance)' : ''}
-                        </span>
-                        {!f.is_active && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">Inactive</span>}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {f.category?.name ?? f.flat_category?.name ?? ''} · {f.is_active ? 'Active' : 'Inactive'} · {f.id.slice(0, 8)}
-                        {mAmt != null ? ` · ₹${mAmt} default` : ' · No default'}
-                      </div>
-                      <div className="text-xs">
-                        {f.tenant ? <span className="text-muted-foreground">Tenant: </span> : null}{f.tenant ? <span className="font-medium">{f.tenant.name}</span> : null}
-                        {f.tenant && f.owner ? <span className="text-muted-foreground"> · </span> : null}
-                        {f.owner ? <><span className="text-muted-foreground">Owner: </span><span className="font-medium">{f.owner.name}</span></> : !f.tenant ? <span className="text-xs text-muted-foreground">No occupant</span> : null}
-                      </div>
-                      {f.default_payer?.person ? (
-                        <div className="text-[11px] text-muted-foreground">POC: {f.default_payer.person.name} · {f.default_payer.person.mobile} ({f.default_payer.role})</div>
-                      ) : f.default_payer_person_id ? (
-                        <div className="text-[11px] text-muted-foreground">POC: {f.default_payer_role}</div>
-                      ) : null}
-                      <div className="text-[11px] text-muted-foreground">Opening ₹{f.opening_due ?? 0} · Paid ₹{f.total_paid ?? 0} · Due ₹{due}</div>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <Button variant="outline" size="sm" onClick={() => setLedgerFlatId(f.id)} data-testid={`ledger-${f.flat_number}`}>
-                        Ledger
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => { setOccFlatId(f.id); setDpFlatId(f.id); setOdFlatId(f.id); fetchOd(); }}>
-                        Select
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })}
-            </CardContent>
-          </Card>
-          <Sheet open={!!ledgerFlatId} onOpenChange={(o) => !o && setLedgerFlatId(null)}>
-            <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto print:max-h-none">
-              <SheetHeader>
-                <SheetTitle>Flat Ledger — {flats.find((x) => x.id === ledgerFlatId)?.flat_number ?? ledgerFlatId?.slice(0, 8)}</SheetTitle>
-                <SheetDescription>
-                  Opening + receipts with running due (advance = negative). Print-friendly.
-                </SheetDescription>
-              </SheetHeader>
-              {ledgerLoading ? (
-                <p className="mt-4 text-sm text-muted-foreground">Loading…</p>
-              ) : ledgerData ? (
-                <div className="mt-4 space-y-3 print:space-y-2">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Opening: ₹{ledgerData.opening_due}</span>
-                    <span>Total paid: ₹{ledgerData.total_paid}</span>
-                    <span className={ledgerData.current_due < 0 ? 'text-emerald-600 font-semibold' : 'font-semibold'}>Current due: ₹{ledgerData.current_due} {ledgerData.current_due < 0 ? '(advance)' : ''}</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-xs text-muted-foreground">
-                          <th className="py-1 text-left">Date</th>
-                          <th className="py-1 text-left">Particulars</th>
-                          <th className="py-1 text-right">Amount</th>
-                          <th className="py-1 text-right">Running Due</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ledgerData.entries.map((e, idx) => (
-                          <tr key={idx} className="border-b">
-                            <td className="py-1 text-xs">{e.business_date ?? '—'}</td>
-                            <td className="py-1 text-xs">{e.type === 'OPENING' ? 'Opening due' : `${e.type} ${e.narration ? `· ${e.narration}` : ''}`}</td>
-                            <td className="py-1 text-right text-xs">{e.type === 'OPENING' ? `₹${e.amount}` : `-₹${e.amount}`}</td>
-                            <td className={`py-1 text-right text-xs font-medium ${e.running_due < 0 ? 'text-emerald-600' : e.running_due > 0 ? 'text-red-600' : ''}`}>₹{e.running_due}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => window.print()} className="print:hidden">
-                    Print
-                  </Button>
-                </div>
-              ) : (
-                <p className="mt-4 text-sm text-muted-foreground">No ledger data.</p>
-              )}
-            </SheetContent>
-          </Sheet>
-        </TabsContent>
+        )}
+      </FormSheet>
 
-        <TabsContent value="persons" className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Create owner / tenant contact (POC)</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label>Name</Label>
-                <Input placeholder="Full name" value={personName} onChange={(e) => setPersonName(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label>Mobile (E.164)</Label>
-                <Input placeholder="9000000011 or +919000000011" value={personMobile} onChange={(e) => setPersonMobile(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label>Alt mobile (optional)</Label>
-                <Input placeholder="Optional" value={personAlt} onChange={(e) => setPersonAlt(e.target.value)} />
-              </div>
-              <Button onClick={() => createPerson.mutate()} disabled={!personName.trim() || !personMobile.trim() || createPerson.isPending} className="w-full">
-                {createPerson.isPending ? 'Creating…' : 'Create contact'}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Contacts</CardTitle></CardHeader>
-            <CardContent className="space-y-2">
-              {persons.length === 0 ? (
-                <div className="rounded-lg border border-dashed bg-muted/20 p-6 text-center">
-                  <p className="text-sm font-medium">No contacts yet</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Add an owner or tenant above to assign them to a flat.</p>
-                </div>
-              ) : persons.map((p) => (
-                <div key={p.id} className="flex items-center justify-between rounded-lg border px-3 py-2">
-                  <div>
-                    <div className="text-sm font-medium">{p.name}</div>
-                    <div className="text-xs text-muted-foreground">{p.mobile}{p.alt_mobile ? ` · alt ${p.alt_mobile}` : ''}</div>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => setOccPersonId(p.id)}>Use</Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Assign to flat</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label>Flat</Label>
-                <Select value={occFlatId} onValueChange={(v) => setOccFlatId(v ?? '')}>
-                  <SelectTrigger data-testid="assign-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === occFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Person</Label>
-                <Select value={occPersonId} onValueChange={(v) => setOccPersonId(v ?? '')}>
-                  <SelectTrigger data-testid="assign-person-select"><SelectValue placeholder="Select person">{persons.find((p) => p.id === occPersonId)?.name ?? undefined}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    {persons.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.mobile}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Role</Label>
-                <Select value={occRole} onValueChange={(v) => setOccRole(v as 'OWNER' | 'TENANT')}>
-                  <SelectTrigger data-testid="assign-role-select"><SelectValue>{occRole}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="OWNER">OWNER</SelectItem>
-                    <SelectItem value="TENANT">TENANT</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button onClick={() => assignOcc.mutate()} disabled={!occFlatId || !occPersonId || assignOcc.isPending} className="w-full">
-                {assignOcc.isPending ? 'Assigning…' : 'Assign'}
-              </Button>
-
-              <div className="rounded-lg bg-muted p-3">
-                <div className="text-xs font-medium">Default payer preview</div>
-                <div className="mt-1 flex gap-2">
-                  <Select value={dpFlatId} onValueChange={(v) => setDpFlatId(v ?? '')}>
-                    <SelectTrigger className="flex-1" data-testid="preview-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === dpFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
-                    <SelectContent>
-                      {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Button variant="outline" size="sm" onClick={fetchDp} data-testid="preview-check-btn">Check</Button>
-                </div>
-                {dpResult && <div className="mt-2 text-xs text-muted-foreground">{dpResult}</div>}
-                <p className="mt-1 text-[11px] text-muted-foreground">Tenant is returned first; owner is fallback.</p>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="opening" className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle className="text-sm">Opening due (per flat)</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <div className="space-y-1">
-                <Label>Flat</Label>
-                <Select value={odFlatId} onValueChange={(v) => { setOdFlatId(v ?? ''); setOdCurrent(null); }}>
-                  <SelectTrigger data-testid="opening-flat-select"><SelectValue placeholder="Select flat">{flats.find((f) => f.id === odFlatId)?.flat_number ?? undefined}</SelectValue></SelectTrigger>
-                  <SelectContent>
-                    {flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.flat_number}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button variant="outline" size="sm" onClick={fetchOd} disabled={!odFlatId} data-testid="opening-show-btn">Show current</Button>
-              {odCurrent !== null && <div className="text-sm">Current opening due: <span className="font-semibold">₹{odCurrent}</span></div>}
-              <div className="space-y-1">
-                <Label>Amount (0 = clear, &gt;0 = owes)</Label>
-                <Input type="number" placeholder="e.g. 2000" value={odAmount} onChange={(e) => setOdAmount(e.target.value)} />
-              </div>
-              <Button onClick={() => putOd.mutate()} disabled={!odFlatId || odAmount === '' || putOd.isPending} className="w-full">
-                {putOd.isPending ? 'Saving…' : 'Set opening due'}
-              </Button>
-              <p className="text-xs text-muted-foreground">Positive means flat owes; 0 means clear. Tenant-first payer resolution is used by receipt entry (Issue 5).</p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      <FormSheet
+        open={openingDueOpen}
+        onOpenChange={setOpeningDueOpen}
+        title="Edit opening due"
+        description={`Set the amount ${selectedFlat?.flat_number ?? 'this flat'} owed when records began. Receipts reduce this balance.`}
+        footer={(
+          <Button
+            className="min-h-12 w-full"
+            disabled={openingDueAmount === '' || Number(openingDueAmount) < 0 || updateOpeningDue.isPending}
+            onClick={() => updateOpeningDue.mutate()}
+          >
+            {updateOpeningDue.isPending ? 'Saving opening due…' : 'Save opening due'}
+          </Button>
+        )}
+      >
+        {openingDueError && <InlineError message={openingDueError} />}
+        <div className="space-y-2">
+          <Label htmlFor="opening-due">Opening due</Label>
+          <Input
+            id="opening-due"
+            type="number"
+            min="0"
+            inputMode="decimal"
+            className="min-h-12 text-lg tabular-nums"
+            value={openingDueAmount}
+            onChange={(event) => setOpeningDueAmount(event.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">Use 0 when the flat had no balance due.</p>
+        </div>
+      </FormSheet>
     </div>
   )
+}
+
+function FlatDetailSheet({
+  flat,
+  ledger,
+  ledgerLoading,
+  ledgerError,
+  onClose,
+  onAddOwner,
+  onAddTenant,
+  onEditOpeningDue,
+}: {
+  flat: Flat | null
+  ledger: LedgerResponse | undefined
+  ledgerLoading: boolean
+  ledgerError: boolean
+  onClose: () => void
+  onAddOwner: () => void
+  onAddTenant: () => void
+  onEditOpeningDue: () => void
+}) {
+  const maintenanceAmount = flat?.maintenance_amount
+    ?? flat?.category_maintenance_amount
+    ?? flat?.flat_category?.maintenance_amount
+  const currentDue = flat?.current_due ?? ledger?.current_due ?? 0
+
+  return (
+    <Sheet open={Boolean(flat)} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)] print:max-h-none">
+        <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+        <SheetHeader>
+          <SheetTitle className="text-xl">Flat {flat?.flat_number}</SheetTitle>
+          <SheetDescription>{flat?.flat_category?.name ?? flat?.category?.name ?? 'Flat details'}</SheetDescription>
+        </SheetHeader>
+
+        {flat && (
+          <div className="space-y-5 px-4 pb-6">
+            <section className="grid grid-cols-3 overflow-hidden rounded-2xl border bg-muted/20">
+              <Metric label="Opening" value={formatMoney(flat.opening_due)} />
+              <Metric label="Paid" value={formatMoney(flat.total_paid)} border />
+              <Metric label={currentDue < 0 ? 'Advance' : 'Current due'} value={formatMoney(Math.abs(currentDue))} border />
+            </section>
+
+            <section className="rounded-2xl border bg-card p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-muted-foreground">Default amount</p>
+                  <p className="mt-1 text-xl font-semibold tabular-nums">{maintenanceAmount == null ? 'Not set' : formatMoney(maintenanceAmount)}</p>
+                </div>
+                <Button variant="outline" className="min-h-11" onClick={onEditOpeningDue}>Edit opening due</Button>
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="font-semibold">People</h2>
+                <span className="text-xs text-muted-foreground">Default payer</span>
+              </div>
+              <div className="overflow-hidden rounded-2xl border bg-card">
+                <PersonRow role="Tenant" person={flat.tenant} isDefault={flat.default_payer?.role === 'TENANT'} onAdd={onAddTenant} />
+                <PersonRow role="Owner" person={flat.owner} isDefault={flat.default_payer?.role === 'OWNER'} onAdd={onAddOwner} border />
+              </div>
+            </section>
+
+            <section>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h2 className="font-semibold">Ledger</h2>
+                <Button variant="ghost" className="min-h-11 print:hidden" onClick={() => window.print()}>
+                  <Printer className="size-4" />
+                  Print
+                </Button>
+              </div>
+              {ledgerLoading ? (
+                <div className="space-y-2" role="status" aria-label="Loading ledger">
+                  <Skeleton className="h-16 rounded-xl" />
+                  <Skeleton className="h-16 rounded-xl" />
+                </div>
+              ) : ledgerError ? (
+                <InlineError message="Ledger could not be loaded. Close the sheet and try again." />
+              ) : !ledger?.entries.length ? (
+                <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">No ledger activity yet.</div>
+              ) : (
+                <div className="overflow-hidden rounded-2xl border bg-card">
+                  {ledger.entries.map((entry, index) => (
+                    <div key={entry.id ?? `${entry.type}-${entry.business_date}-${index}`} className={`flex min-h-16 items-center gap-3 px-4 py-3 ${index > 0 ? 'border-t' : ''}`}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <ArrowDownLeft className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{friendlyLedgerType(entry.type)}</span>
+                        <span className="block text-xs text-muted-foreground">{formatDate(entry.business_date)}</span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block font-semibold tabular-nums">{entry.type === 'OPENING' ? formatMoney(entry.amount) : `−${formatMoney(entry.amount)}`}</span>
+                        <span className="text-xs text-muted-foreground">Balance {formatMoney(entry.running_due)}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function PersonRow({
+  role,
+  person,
+  isDefault,
+  onAdd,
+  border = false,
+}: {
+  role: 'Owner' | 'Tenant'
+  person: Person | null | undefined
+  isDefault: boolean
+  onAdd: () => void
+  border?: boolean
+}) {
+  return (
+    <div className={`flex min-h-[72px] items-center gap-3 px-4 py-3 ${border ? 'border-t' : ''}`}>
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <UserRound className="size-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-xs text-muted-foreground">{role}{isDefault ? ' · Default payer' : ''}</span>
+        {person ? (
+          <>
+            <span className="block truncate font-medium">{person.name}</span>
+            <span className="block text-xs text-muted-foreground">{person.mobile}</span>
+          </>
+        ) : (
+          <span className="block text-sm text-muted-foreground">Not assigned</span>
+        )}
+      </span>
+      {!person && <Button variant="outline" className="min-h-11" onClick={onAdd}>Add {role.toLowerCase()}</Button>}
+    </div>
+  )
+}
+
+function Metric({ label, value, border = false }: { label: string; value: string; border?: boolean }) {
+  return (
+    <div className={`min-w-0 p-3 text-center ${border ? 'border-l' : ''}`}>
+      <p className="truncate text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 truncate font-semibold tabular-nums">{value}</p>
+    </div>
+  )
+}
+
+function FormSheet({
+  open,
+  onOpenChange,
+  title,
+  description,
+  footer,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  description: string
+  footer: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+        <SheetHeader>
+          <SheetTitle className="text-xl">{title}</SheetTitle>
+          <SheetDescription>{description}</SheetDescription>
+        </SheetHeader>
+        <div className="space-y-4 px-4">{children}</div>
+        <SheetFooter className="sticky bottom-0 border-t bg-popover">{footer}</SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function StatusBadge({ label }: { label: string }) {
+  return <span className="rounded-lg bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{label}</span>
+}
+
+function InlineError({ message }: { message: string }) {
+  return <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>
 }

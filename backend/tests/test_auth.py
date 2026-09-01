@@ -180,8 +180,13 @@ def test_admin_can_authenticate_and_call_guarded_endpoint(conn):
     assert payload.get("sub")
     me = client.get("/api/me", headers=_auth_header(token))
     assert me.status_code == 200, me.text
-    assert me.json().get("mobile") == "+919000000000"
-    assert "SOCIETY_ADMIN" in me.json().get("roles", [])
+    payload = me.json()
+    assert payload.get("mobile") == "+919000000000"
+    assert payload.get("platform_admin") is True
+    assert "SOCIETY_ADMIN" in payload.get("roles", [])
+    assert payload.get("memberships"), payload
+    assert payload["memberships"][0]["roles"] == ["SOCIETY_ADMIN"]
+    assert payload["memberships"][0]["permissions"] == ["*"]
 
 
 def test_unauthenticated_requests_are_rejected():

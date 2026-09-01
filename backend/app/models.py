@@ -262,6 +262,8 @@ class Receipt(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
+    receipt_number: Mapped[str | None] = mapped_column(Text, unique=True)
+    public_pdf_token: Mapped[str | None] = mapped_column(Text, unique=True)
     flat_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     payer_person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id"))
     fund_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("funds.id"))
@@ -279,6 +281,16 @@ class Receipt(Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     voided_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("society_memberships.id"))
     void_reason: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
+class SocietyReceiptSequence(Base):
+    __tablename__ = "society_receipt_sequences"
+    __table_args__ = (CheckConstraint("next_number > 0", name="society_receipt_sequences_next_number_check"),)
+
+    society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), primary_key=True)
+    fy_year: Mapped[int] = mapped_column(primary_key=True)
+    next_number: Mapped[int] = mapped_column(server_default=text("1"), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 
@@ -367,6 +379,27 @@ class CashOpeningBalance(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 
+class ReportRun(Base):
+    __tablename__ = "report_runs"
+    __table_args__ = (
+        CheckConstraint("from_date <= to_date", name="report_runs_date_range_check"),
+        UniqueConstraint("society_id", "from_date", "to_date", name="report_runs_society_range_key"),
+        Index("report_runs_by_society_generated_at", "society_id", "generated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    opening: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    total_receipts: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    total_expenses: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    closing: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+    generated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("society_memberships.id"))
+    format: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (
@@ -380,6 +413,7 @@ class Notification(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     society_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("societies.id"), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     receipt_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("receipts.id", ondelete="SET NULL"))
     payer_person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("persons.id", ondelete="SET NULL"))
     flat_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("flats.id", ondelete="SET NULL"))
@@ -387,8 +421,26 @@ class Notification(Base):
     provider_mode: Mapped[str] = mapped_column(Text, server_default=text("'test'"), nullable=False)
     status: Mapped[str] = mapped_column(Text, server_default=text("'LOGGED'"), nullable=False)
     message: Mapped[str | None] = mapped_column(Text)
+    provider_message_id: Mapped[str | None] = mapped_column(Text)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
     business_date: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+
+
+class PushSubscription(Base):
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "endpoint", name="push_subscriptions_user_endpoint_key"),
+        Index("push_subscriptions_by_user", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("now()"), nullable=False)
 
 
 __all__ = [
@@ -404,9 +456,12 @@ __all__ = [
     "Notification",
     "OpeningDue",
     "Person",
+    "PushSubscription",
     "Receipt",
+    "ReportRun",
     "Role",
     "Society",
+    "SocietyReceiptSequence",
     "SocietyMembership",
     "User",
     "Vendor",

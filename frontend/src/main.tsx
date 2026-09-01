@@ -9,7 +9,7 @@ async function enableMocking() {
   await worker.start({ onUnhandledRequest: 'bypass' })
 }
 
-enableMocking().then(() => {
+enableMocking().catch(() => undefined).finally(() => {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

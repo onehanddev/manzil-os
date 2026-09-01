@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@/test/utils'
 import { server } from '@/test/server'
 import { ReceiptsPage } from './receipts'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
   it('prefills amount with flat category default when flat is selected, leaves empty if no default', async () => {
@@ -61,5 +65,69 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
     await user.clear(amountInput)
     await user.type(amountInput, '2000')
     expect(amountInput).toHaveValue('2000')
+  })
+
+  it('announces lost connectivity and blocks recording until the device is online', async () => {
+    let isOnline = true
+    vi.stubGlobal('navigator', { ...navigator, get onLine() { return isOnline } })
+    renderWithProviders(<ReceiptsPage />)
+
+    isOnline = false
+    act(() => window.dispatchEvent(new Event('offline')))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'You’re offline. Financial entries can’t be recorded.',
+    )
+    expect(screen.getByRole('button', { name: /Record receipt/i })).toBeDisabled()
+
+    isOnline = true
+    act(() => window.dispatchEvent(new Event('online')))
+
+    await waitFor(() => expect(screen.queryByText(/You’re offline/i)).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Record receipt/i })).toBeEnabled()
+  })
+
+  it('shows official receipt number, PDF action, WhatsApp status, and resend action', async () => {
+    const user = userEvent.setup()
+    let resendCalled = false
+    server.use(
+      http.get('*/api/flats', () => HttpResponse.json({ flats: [] })),
+      http.get('*/api/funds', () => HttpResponse.json({ funds: [{ id: 'fund-main', name: 'Main Fund', is_active: true }] })),
+      http.get('*/api/receipts', () => HttpResponse.json({
+        receipts: [
+          {
+            id: 'receipt-13',
+            flat_id: 'flat-1010000',
+            amount: 1500,
+            business_date: '2026-04-02',
+            type: 'REGULAR',
+            status: 'POSTED',
+            receipt_number: 'MANZIL/26-27/00001',
+            public_pdf_url: '/receipts/receipt-13/pdf?token=public-token-13',
+            whatsapp_status: 'LOGGED',
+            whatsapp_failure_reason: null,
+            collected_by: 'membership-admin',
+          },
+        ],
+      })),
+      http.post('*/api/receipts/receipt-13/whatsapp-resend', () => {
+        resendCalled = true
+        return HttpResponse.json({ id: 'notif-13', status: 'LOGGED', provider_mode: 'test' }, { status: 201 })
+      }),
+    )
+
+    renderWithProviders(<ReceiptsPage />)
+
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
+    expect(await screen.findByText('MANZIL/26-27/00001')).toBeInTheDocument()
+    // open detail sheet — PDF/WhatsApp are now inside the sheet per Slice 2
+    await user.click(screen.getByRole('button', { name: /MANZIL\/26-27\/00001/i }))
+    const dialog = await screen.findByRole('dialog')
+    const { within } = await import('@testing-library/react')
+    expect(within(dialog).getByRole('link', { name: /Download PDF/i })).toHaveAttribute('href', 'http://localhost:8000/receipts/receipt-13/pdf?token=public-token-13')
+    expect(within(dialog).getByText(/LOGGED/i)).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /Resend WhatsApp/i }))
+    expect(resendCalled).toBe(true)
   })
 })

@@ -1,69 +1,218 @@
-import { describe, expect, it } from 'vitest'
-import { screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@/test/utils'
 import { server } from '@/test/server'
 import { FlatsPage } from './flats'
 
-// Seam: user-visible FlatsPage — category creation with maintenance_amount and receipt prefill
-describe('FlatsPage — maintenance_amount (TDD)', () => {
-  it('shows maintenance amount input when creating a category (null default)', async () => {
+const category = {
+  id: 'cat-1',
+  name: '2 BHK',
+  is_active: true,
+  maintenance_amount: 2500,
+}
+
+const flat = {
+  id: 'flat-1',
+  flat_number: 'A-101',
+  flat_category_id: category.id,
+  is_active: true,
+  maintenance_amount: 2500,
+  flat_category: category,
+  owner: { id: 'person-owner', name: 'Asha Shah', mobile: '9000000001' },
+  tenant: null,
+  default_payer: {
+    person: { id: 'person-owner', name: 'Asha Shah', mobile: '9000000001' },
+    role: 'OWNER',
+  },
+  opening_due: 4000,
+  total_paid: 1500,
+  current_due: 2500,
+}
+
+function useFlatFixtures() {
+  server.use(
+    http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [category] })),
+    http.get('*/api/flats', () => HttpResponse.json({
+      flats: [
+        flat,
+        { ...flat, id: 'flat-2', flat_number: 'B-202', owner: null, default_payer: null },
+      ],
+    })),
+    http.get('*/api/persons', () => HttpResponse.json({
+      persons: [flat.owner, { id: 'person-tenant', name: 'Ravi Mehta', mobile: '9000000002' }],
+    })),
+    http.get('*/api/flats/flat-1/ledger', () => HttpResponse.json({
+      flat_id: flat.id,
+      flat_number: flat.flat_number,
+      opening_due: 4000,
+      total_paid: 1500,
+      current_due: 2500,
+      entries: [
+        { type: 'OPENING', business_date: null, amount: 4000, narration: 'Opening due', running_due: 4000 },
+        { type: 'REGULAR', business_date: '2026-08-31', amount: 1500, narration: null, running_due: 2500 },
+      ],
+    })),
+  )
+}
+
+describe('FlatsPage — searchable setup and contextual detail', () => {
+  it('searches flats and opens occupants, dues, and ledger from the full row', async () => {
+    useFlatFixtures()
+    const user = userEvent.setup()
+    renderWithProviders(<FlatsPage />)
+
+    const search = await screen.findByRole('searchbox', { name: 'Search flats' })
+    await user.type(search, 'A-101')
+
+    expect(screen.getByRole('button', { name: /A-101/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /B-202/ })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /A-101/ }))
+    const detail = await screen.findByRole('dialog', { name: 'Flat A-101' })
+
+    expect(within(detail).getByText('Asha Shah')).toBeInTheDocument()
+    expect(within(detail).getByText('Default payer')).toBeInTheDocument()
+    expect(within(detail).getAllByText('₹2,500').length).toBeGreaterThan(0)
+    expect(within(detail).getByText('31 Aug 2026')).toBeInTheDocument()
+    expect(within(detail).queryByText(/flat-1/)).not.toBeInTheDocument()
+  })
+
+  it('adds a tenant from flat detail and immediately shows the new default payer', async () => {
+    useFlatFixtures()
+    let assigned = false
+    server.use(
+      http.post('*/api/flats/flat-1/occupants', async ({ request }) => {
+        const body = await request.json() as { person_id: string; role: string }
+        expect(body).toEqual({ person_id: 'person-tenant', role: 'TENANT' })
+        assigned = true
+        return HttpResponse.json({ id: 'occ-1', ...body }, { status: 201 })
+      }),
+      http.get('*/api/flats', () => HttpResponse.json({
+        flats: [{
+          ...flat,
+          tenant: assigned ? { id: 'person-tenant', name: 'Ravi Mehta', mobile: '9000000002' } : null,
+          default_payer: assigned ? {
+            person: { id: 'person-tenant', name: 'Ravi Mehta', mobile: '9000000002' },
+            role: 'TENANT',
+          } : flat.default_payer,
+        }],
+      })),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<FlatsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /A-101/ }))
+    await user.click(screen.getByRole('button', { name: 'Add tenant' }))
+    await user.click(screen.getByRole('combobox', { name: 'Person' }))
+    await user.click(await screen.findByRole('option', { name: /Ravi Mehta/ }))
+    await user.click(screen.getByRole('button', { name: 'Add tenant' }))
+
+    const detail = await screen.findByRole('dialog', { name: 'Flat A-101' })
+    expect(await within(detail).findByText('Ravi Mehta')).toBeInTheDocument()
+    expect(within(detail).getByText('Tenant · Default payer')).toBeInTheDocument()
+  })
+
+  it('updates opening due from flat detail and refreshes visible totals', async () => {
+    useFlatFixtures()
+    let openingDue = 4000
+    server.use(
+      http.get('*/api/flats', () => HttpResponse.json({
+        flats: [{ ...flat, opening_due: openingDue, current_due: openingDue - 1500 }],
+      })),
+      http.put('*/api/flats/flat-1/opening-due', async ({ request }) => {
+        const body = await request.json() as { amount: number }
+        openingDue = body.amount
+        return HttpResponse.json({ flat_id: flat.id, amount: openingDue })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<FlatsPage />)
+
+    await user.click(await screen.findByRole('button', { name: /A-101/ }))
+    await user.click(screen.getByRole('button', { name: 'Edit opening due' }))
+    const amount = screen.getByLabelText('Opening due')
+    await user.clear(amount)
+    await user.type(amount, '5000')
+    await user.click(screen.getByRole('button', { name: 'Save opening due' }))
+
+    const detail = await screen.findByRole('dialog', { name: 'Flat A-101' })
+    expect(await within(detail).findByText('₹5,000')).toBeInTheDocument()
+    expect(within(detail).getAllByText('₹3,500').length).toBeGreaterThan(0)
+  })
+
+  it('creates a flat from a focused sheet and shows it in the list', async () => {
+    let flats = [flat]
+    server.use(
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [category] })),
+      http.get('*/api/flats', () => HttpResponse.json({ flats })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.post('*/api/flats', async ({ request }) => {
+        const body = await request.json() as { flat_number: string; flat_category_id: string }
+        flats = [...flats, { ...flat, id: 'flat-new', flat_number: body.flat_number, flat_category_id: body.flat_category_id }]
+        return HttpResponse.json(flats.at(-1), { status: 201 })
+      }),
+    )
+    const user = userEvent.setup()
+    renderWithProviders(<FlatsPage />)
+
+    await user.click(await screen.findByRole('button', { name: 'Add flat' }))
+    await user.type(screen.getByLabelText('Flat number'), 'C-303')
+    await user.click(screen.getByRole('combobox', { name: 'Category' }))
+    await user.click(await screen.findByRole('option', { name: /2 BHK/ }))
+    await user.click(screen.getByRole('button', { name: 'Create flat' }))
+
+    expect(await screen.findByRole('button', { name: /C-303/ })).toBeInTheDocument()
+  })
+
+  it('keeps failures distinct from a truthful empty state', async () => {
     server.use(
       http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [] })),
+      http.get('*/api/flats', () => HttpResponse.json({ detail: 'Unavailable' }, { status: 500 })),
+      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
+    )
+    renderWithProviders(<FlatsPage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Flats could not be loaded')
+    expect(screen.queryByText('No flats yet')).not.toBeInTheDocument()
+  })
+
+  it('preserves flat values when creation fails', async () => {
+    server.use(
+      http.get('*/api/flat-categories', () => HttpResponse.json({ categories: [category] })),
       http.get('*/api/flats', () => HttpResponse.json({ flats: [] })),
       http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
+      http.post('*/api/flats', () => HttpResponse.json({ detail: 'Flat number already exists' }, { status: 409 })),
     )
-    renderWithProviders(<FlatsPage />)
-
-    // Must have category name input and maintenance amount input
-    expect(await screen.findByText('Create flat category')).toBeInTheDocument()
-    // new field: maintenance amount, nullable default -> input should be empty initially
-    const amountInput = screen.getByLabelText(/Maintenance amount/i)
-    expect(amountInput).toBeInTheDocument()
-    expect(amountInput).toHaveValue('')
-  })
-
-  it('lists categories with their maintenance amount and prefills receipt amount from flat category', async () => {
-    const categories = [
-      { id: 'cat-1', name: '1 BHK', is_active: true, maintenance_amount: 1500 },
-      { id: 'cat-2', name: '2 BHK', is_active: true, maintenance_amount: null },
-    ]
-    const flats = [
-      { id: 'flat-1', flat_number: 'A-101', flat_category_id: 'cat-1', is_active: true, maintenance_amount: 1500, category_maintenance_amount: 1500, flat_category: { id: 'cat-1', name: '1 BHK', maintenance_amount: 1500 } },
-      { id: 'flat-2', flat_number: 'B-202', flat_category_id: 'cat-2', is_active: true, maintenance_amount: null, category_maintenance_amount: null, flat_category: { id: 'cat-2', name: '2 BHK', maintenance_amount: null } },
-    ]
-    server.use(
-      http.get('*/api/flat-categories', () => HttpResponse.json({ categories })),
-      http.get('*/api/flats', () => HttpResponse.json({ flats })),
-      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
-      http.get('*/api/flats/flat-1', () => HttpResponse.json(flats[0])),
-      http.get('*/api/flats/flat-2', () => HttpResponse.json(flats[1])),
-    )
-    renderWithProviders(<FlatsPage />)
-
-    // categories list should display amounts
-    expect(await screen.findByText('1 BHK')).toBeInTheDocument()
-    // maintenance amount displayed (₹1500 or 1500) — should be visible immediately after categories load (multiple matches)
-    expect(screen.getAllByText(/1500/).length).toBeGreaterThan(0)
-    // cat-2 has no default -> should show "No default" or "-" or empty
-    expect(screen.getByText(/2 BHK/)).toBeInTheDocument()
-  })
-
-  it('receipt flow: selecting a flat prefills amount with category default, leaves empty if no default', async () => {
     const user = userEvent.setup()
-    const categories = [{ id: 'cat-1', name: '1 BHK', is_active: true, maintenance_amount: 1800 }]
-    const flats = [{ id: 'flat-1', flat_number: 'A-101', flat_category_id: 'cat-1', is_active: true, maintenance_amount: 1800 }]
-    server.use(
-      http.get('*/api/flat-categories', () => HttpResponse.json({ categories })),
-      http.get('*/api/flats', () => HttpResponse.json({ flats })),
-      http.get('*/api/persons', () => HttpResponse.json({ persons: [] })),
-    )
     renderWithProviders(<FlatsPage />)
-    // Flats are under second tab
-    await user.click(screen.getByRole('tab', { name: 'Flats' }))
-    expect(await screen.findByText('A-101')).toBeInTheDocument()
-    // Flat card should show maintenance amount hint
-    expect(screen.getAllByText(/1800/).length).toBeGreaterThan(0)
+
+    await user.click(await screen.findByRole('button', { name: 'Add flat' }))
+    await user.type(screen.getByLabelText('Flat number'), 'A-101')
+    await user.click(screen.getByRole('combobox', { name: 'Category' }))
+    await user.click(await screen.findByRole('option', { name: /2 BHK/ }))
+    await user.click(screen.getByRole('button', { name: 'Create flat' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Flat number already exists')
+    expect(screen.getByLabelText('Flat number')).toHaveValue('A-101')
+  })
+
+  it('exports the existing flat dues workbook', async () => {
+    useFlatFixtures()
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test')
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    server.use(http.get('*/api/reports/flat-dues.xlsx', () => HttpResponse.arrayBuffer(new ArrayBuffer(8))))
+    const user = userEvent.setup()
+    renderWithProviders(<FlatsPage />)
+
+    await user.click(await screen.findByRole('button', { name: 'Export dues' }))
+
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(click).toHaveBeenCalled()
+    createObjectURL.mockRestore()
+    revokeObjectURL.mockRestore()
+    click.mockRestore()
   })
 })

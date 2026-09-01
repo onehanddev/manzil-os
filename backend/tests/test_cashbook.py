@@ -287,8 +287,7 @@ def test_collector_can_view_report(conn):
     admin_token = _admin_token(client)
     collector_token = _collector_token(client, admin_token)
     r = client.get("/api/reports/cashbook?from=2099-01-01&to=2099-01-31", headers=_auth_header(collector_token))
-    assert r.status_code == 200, r.text
-    assert "opening" in r.json()
+    assert r.status_code == 403, r.text
 
 
 # ---- Opening balance + Report ----
