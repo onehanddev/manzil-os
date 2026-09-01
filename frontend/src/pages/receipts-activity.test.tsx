@@ -13,6 +13,7 @@ const flats = [
 
 describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () => {
   it('activity rows show human-readable flat, formatted amount, date, and plain status — not UUID fragments', async () => {
+    const user = userEvent.setup()
     server.use(
       http.get('*/api/flats', () => HttpResponse.json({ flats })),
       http.get('*/api/funds', () => HttpResponse.json({ funds: [{ id: 'fund-main', name: 'Main Fund', is_active: true }] })),
@@ -37,6 +38,7 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
       ),
     )
     renderWithProviders(<ReceiptsPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
 
     // flat number appears, UUID fragment does not
     expect(await screen.findByText(/A-101/)).toBeInTheDocument()
@@ -47,11 +49,12 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
     expect(screen.getByText(/₹1,500/)).toBeInTheDocument()
 
     // plain-language status Recorded (not POSTED, not UUID)
-    expect(screen.getByText(/Recorded/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Recorded/).length).toBeGreaterThan(0)
+    // ensure no row shows raw POSTED status badge — page description no longer contains POSTED
     expect(screen.queryByText(/\bPOSTED\b/)).not.toBeInTheDocument()
 
     // human date (31 Aug 2026 or Aug 31)
-    expect(screen.getByText(/31 Aug 2026|Aug 31|31 Aug/i)).toBeInTheDocument()
+    expect(screen.getAllByText(/31 Aug 2026|Aug 31|31 Aug/i).length).toBeGreaterThan(0)
 
     // collector fallback not showing raw slice without label — should have Recorded by or Collector label
     // Ensure we don't leak the raw collector UUID fragment as the primary text
@@ -87,20 +90,19 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
       ),
     )
     renderWithProviders(<ReceiptsPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
 
-    // find row and click it
-    const row = await screen.findByRole('button', { name: /A-101.*₹1,800|View receipt|MANZIL\/26-27\/00042/i })
-      .catch(() => screen.findByText(/A-101/))
     const clickable = await screen.findByText(/A-101/)
     await user.click(clickable)
 
     // detail sheet appears
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByText(/MANZIL\/26-27\/00042/)).toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByText(/₹1,800/)).toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByText(/31 Aug 2026|Aug 31/i)).toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByRole('link', { name: /Download PDF/i })).toBeInTheDocument()
-    expect(within(screen.getByRole('dialog')).getByRole('button', { name: /Resend WhatsApp/i })).toBeInTheDocument()
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toBeInTheDocument()
+    expect(within(dialog).getAllByText(/MANZIL\/26-27\/00042/).length).toBeGreaterThan(0)
+    expect(within(dialog).getByText(/₹1,800/)).toBeInTheDocument()
+    expect(within(dialog).getAllByText(/31 Aug 2026|Aug 31/i).length).toBeGreaterThan(0)
+    expect(within(dialog).getByRole('link', { name: /Download PDF/i })).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /Resend WhatsApp/i })).toBeInTheDocument()
   })
 
   it('void requires confirmation sheet with reason and impact text — no one-tap Undo', async () => {
@@ -139,6 +141,7 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
       }),
     )
     renderWithProviders(<ReceiptsPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
 
     await screen.findByText(/A-101/)
     // open detail
@@ -153,8 +156,7 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
     await user.click(voidBtn)
 
     // confirmation sheet appears with impact text and reason field
-    const confirm = await screen.findByRole('dialog', { name: /Void receipt/i })
-      .catch(() => screen.findByText(/Void receipt\?/))
+    await screen.findByRole('dialog', { name: /Void receipt/i }).catch(() => screen.findByText(/Void receipt\?/))
     // need to handle nested dialogs — use getAll
     const dialogs = screen.getAllByRole('dialog')
     const confirmDialog = dialogs[dialogs.length - 1]
@@ -192,6 +194,7 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
       }),
     )
     renderWithProviders(<ReceiptsPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
 
     expect(await screen.findByText(/A-101/)).toBeInTheDocument()
     expect(screen.getByText(/B-202/)).toBeInTheDocument()
@@ -199,13 +202,14 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
     // Filters button opens bottom sheet
     const filtersBtn = screen.getByRole('button', { name: /Filters/i })
     await user.click(filtersBtn)
-    expect(await screen.findByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByLabelText(/Unit|Flat/i)).toBeInTheDocument()
+    const filterDialog = await screen.findByRole('dialog')
+    expect(filterDialog).toBeInTheDocument()
+    expect(within(filterDialog).getByLabelText(/Unit/i)).toBeInTheDocument()
 
     // select B-202 filter and apply
-    await user.click(screen.getByRole('combobox', { name: /Unit|Flat/i }))
-    await user.click(await screen.findByText('B-202'))
-    await user.click(screen.getByRole('button', { name: /Apply filters/i }))
+    await user.click(within(filterDialog).getByRole('combobox', { name: /Unit/i }))
+    await user.click(await screen.findByRole('option', { name: 'B-202' }))
+    await user.click(within(filterDialog).getByRole('button', { name: /Apply filters/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/B-202/)).toBeInTheDocument()
@@ -232,6 +236,7 @@ describe('ReceiptsPage — Slice 2: Receipt Activity And Safe Corrections', () =
       }),
     )
     renderWithProviders(<ReceiptsPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
     await user.click(await screen.findByText(/A-101/))
     const dialog = await screen.findByRole('dialog')
     await user.click(within(dialog).getByRole('button', { name: /Resend WhatsApp/i }))

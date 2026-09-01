@@ -39,8 +39,10 @@ describe('ReportsPage - push notifications', () => {
       }),
     )
 
+    const user = userEvent.setup()
     renderWithProviders(<ReportsPage />)
-    await userEvent.setup().click(await screen.findByRole('button', { name: 'Enable notifications' }))
+    await user.click(await screen.findByRole('button', { name: 'Report actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Enable notifications' }))
 
     await waitFor(() => {
       expect(subscribe).toHaveBeenCalledWith({
@@ -48,7 +50,8 @@ describe('ReportsPage - push notifications', () => {
         keys: { p256dh: 'browser-public-key', auth: 'browser-auth-secret' },
       })
     })
-    expect(screen.getByRole('button', { name: 'Notifications enabled' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Report actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Notifications enabled' })).toBeInTheDocument()
   })
 
   it('opens the pushed daily-report deep link on today\'s cashbook range', async () => {
@@ -70,10 +73,12 @@ describe('ReportsPage - push notifications', () => {
       }),
     )
 
+    const d = new Date()
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     renderWithProviders(<ReportsPage />, { route: '/reports?from=today&to=today' })
 
     await waitFor(() => {
-      expect(requestedRange).toBe(`?from=${new Date().toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}`)
+      expect(requestedRange).toBe(`?from=${today}&to=${today}`)
     })
   })
 })

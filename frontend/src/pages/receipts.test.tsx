@@ -94,11 +94,16 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
 
     renderWithProviders(<ReceiptsPage />)
 
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
     expect(await screen.findByText('MANZIL/26-27/00001')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Download PDF/i })).toHaveAttribute('href', 'http://localhost:8000/receipts/receipt-13/pdf?token=public-token-13')
-    expect(screen.getByText(/WhatsApp: LOGGED/i)).toBeInTheDocument()
+    // open detail sheet — PDF/WhatsApp are now inside the sheet per Slice 2
+    await user.click(screen.getByRole('button', { name: /MANZIL\/26-27\/00001/i }))
+    const dialog = await screen.findByRole('dialog')
+    const { within } = await import('@testing-library/react')
+    expect(within(dialog).getByRole('link', { name: /Download PDF/i })).toHaveAttribute('href', 'http://localhost:8000/receipts/receipt-13/pdf?token=public-token-13')
+    expect(within(dialog).getByText(/LOGGED/i)).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /Resend WhatsApp/i }))
+    await user.click(within(dialog).getByRole('button', { name: /Resend WhatsApp/i }))
     expect(resendCalled).toBe(true)
   })
 })

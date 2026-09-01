@@ -31,8 +31,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
     mockedUseMe.mockReturnValue({ data: undefined, isLoading: true } as unknown as ReturnType<typeof useMe>)
 
     expect(() => renderWithProviders(<DashboardPage />)).not.toThrow()
-    expect(screen.getByText('Phase 0 scope')).toBeInTheDocument()
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
   })
 
   it('does not crash when memberships is undefined (malformed payload / backend shape mismatch)', () => {
@@ -50,8 +49,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
 
     // Before fix this throws TypeError: Cannot read properties of undefined (reading 'find')
     expect(() => renderWithProviders(<DashboardPage />)).not.toThrow()
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
-    expect(screen.getByText('Phase 0 scope')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
   })
 
   it('does not crash when memberships is null', () => {
@@ -65,7 +63,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
     } as unknown as ReturnType<typeof useMe>)
 
     expect(() => renderWithProviders(<DashboardPage />)).not.toThrow()
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
   })
 
   it('does not crash when memberships is an empty array', () => {
@@ -79,7 +77,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
     } as unknown as ReturnType<typeof useMe>)
 
     expect(() => renderWithProviders(<DashboardPage />)).not.toThrow()
-    expect(screen.getByText('Dashboard')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
   })
 
   it('renders society name when memberships are available and currentSocietyId matches', () => {
@@ -97,7 +95,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
     renderWithProviders(<DashboardPage />)
 
     expect(screen.getByText(/Lotus Divine/)).toBeInTheDocument()
-    expect(screen.getByText('Phase 0 scope')).toBeInTheDocument()
+    expect(screen.getByText('Home')).toBeInTheDocument()
   })
 
   it('does not show the cashbook report entry point to collectors', () => {
@@ -114,7 +112,7 @@ describe('DashboardPage — memberships optional chaining (TDD)', () => {
 
     renderWithProviders(<DashboardPage />)
 
-    expect(screen.queryByText('Cashbook Report')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /reports/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('View cashbook report')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /View cashbook report/i })).not.toBeInTheDocument()
   })
 })

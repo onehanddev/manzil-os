@@ -34,3 +34,5 @@ cypress/downloads
 
 # PWA
 dev-dist
+.vercel
+.env*

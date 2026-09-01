@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@/test/utils'
@@ -14,12 +14,24 @@ const categories = [
   { id: 'cat-electricity', name: 'Electricity', is_active: true },
   { id: 'cat-salary', name: 'Salary', is_active: true },
 ]
-const vendors = [
-  { id: 'vendor-msedcl', name: 'MSEDCL', is_active: true },
-]
+const initialVendors = [{ id: 'vendor-msedcl', name: 'MSEDCL', is_active: true }]
 
-function mockHandlers(overrides: { expenses?: unknown[] } = {}) {
-  const expensesStore: unknown[] = overrides.expenses ?? []
+type ExpenseRecord = {
+  id: string
+  business_date: string
+  amount: number
+  fund_id: string
+  category_id: string
+  vendor_id: string
+  narration: string
+  created_by: string
+  created_at: string
+}
+
+function mockHandlers(initialExpenses: ExpenseRecord[] = []) {
+  const expenses = [...initialExpenses]
+  const vendors = [...initialVendors]
+  const submittedBodies: Record<string, unknown>[] = []
   server.use(
     http.get('*/api/funds', () => HttpResponse.json({ funds })),
     http.get('*/api/expense-categories', () => HttpResponse.json({ categories, expense_categories: categories })),
@@ -27,200 +39,172 @@ function mockHandlers(overrides: { expenses?: unknown[] } = {}) {
     http.get('*/api/expenses', ({ request }) => {
       const url = new URL(request.url)
       const from = url.searchParams.get('from')
-      const to = url.searchParams.get('to')
-      const cat = url.searchParams.get('category_id')
-      const ven = url.searchParams.get('vendor_id')
-      const fund = url.searchParams.get('fund_id')
-      let filtered = [...expensesStore] as Array<Record<string, unknown>>
-      if (from) filtered = filtered.filter((e) => (e.business_date as string) >= from)
-      if (to) filtered = filtered.filter((e) => (e.business_date as string) <= to)
-      if (cat) filtered = filtered.filter((e) => e.category_id === cat)
-      if (ven) filtered = filtered.filter((e) => e.vendor_id === ven)
-      if (fund) filtered = filtered.filter((e) => e.fund_id === fund)
-      return HttpResponse.json({ expenses: filtered })
+      const fundId = url.searchParams.get('fund_id')
+      return HttpResponse.json({
+        expenses: expenses.filter((expense) => (!from || expense.business_date >= from) && (!fundId || expense.fund_id === fundId)),
+      })
     }),
     http.post('*/api/expenses', async ({ request }) => {
       const body = (await request.json()) as Record<string, unknown>
-      const amount = body.amount as number
-      if (amount == null || amount <= 0) return HttpResponse.json({ detail: 'amount must be > 0' }, { status: 422 })
-      if (body.payment_method && (body.payment_method as string) !== 'CASH') return HttpResponse.json({ detail: 'payment_method must be CASH' }, { status: 422 })
-      if (!body.business_date || !body.fund_id || !body.category_id) return HttpResponse.json({ detail: 'missing fields' }, { status: 422 })
-      // vendor_name get-or-create simulation
+      submittedBodies.push(body)
       let vendorId = body.vendor_id as string | undefined
-      let vendorName = body.vendor_name as string | undefined
-      if (!vendorId && vendorName && (vendorName as string).trim()) {
-        const existing = vendors.find((v) => v.name.toLowerCase() === (vendorName as string).trim().toLowerCase())
+      if (!vendorId) {
+        const name = String(body.vendor_name)
+        const existing = vendors.find((vendor) => vendor.name.toLowerCase() === name.toLowerCase())
         if (existing) vendorId = existing.id
         else {
-          const newId = `vendor-${Date.now()}`
-          const newVendor = { id: newId, name: (vendorName as string).trim(), is_active: true }
-          vendors.push(newVendor)
-          vendorId = newId
+          vendorId = `vendor-${vendors.length + 1}`
+          vendors.push({ id: vendorId, name, is_active: true })
         }
       }
-      const expense = {
-        id: `exp-${Date.now()}`,
-        business_date: body.business_date,
-        amount,
-        fund_id: body.fund_id,
-        category_id: body.category_id,
-        vendor_id: vendorId ?? null,
-        narration: body.narration ?? null,
-        created_by: 'membership-1',
-        created_at: new Date().toISOString(),
+      const expense: ExpenseRecord = {
+        id: `expense-${expenses.length + 1}`,
+        business_date: String(body.business_date),
+        amount: Number(body.amount),
+        fund_id: String(body.fund_id),
+        category_id: String(body.category_id),
+        vendor_id: vendorId,
+        narration: String(body.narration),
+        created_by: 'membership-private-id',
+        created_at: '2099-06-10T10:30:00Z',
       }
-      expensesStore.push(expense)
+      expenses.push(expense)
       return HttpResponse.json(expense, { status: 201 })
     }),
   )
-  return { expensesStore }
+  return { expenses, submittedBodies, vendors }
 }
 
-describe('ExpensesPage — T1 Expense Management (TDD)', () => {
-  it('renders cash expense form with required fields and CASH-only notice', async () => {
-    mockHandlers()
-    renderWithProviders(<ExpensesPage />)
-    expect(await screen.findByRole('heading', { name: /Expenses/i })).toBeInTheDocument()
-    expect(screen.getByLabelText(/business date/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^Amount$/i)).toBeInTheDocument()
-    // vendor_name field for inline creation
-    expect(screen.getByPlaceholderText(/new vendor name/i)).toBeInTheDocument()
-    // selects for Fund and Category
-    expect(screen.getAllByText(/CASH/).length).toBeGreaterThan(0)
-    expect(screen.getByText(/Payment method/i)).toBeInTheDocument()
-    // non-cash methods not shown
-    expect(screen.queryByText(/BANK/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/UPI/i)).not.toBeInTheDocument()
-  })
+async function openDetails(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /^Details/i }))
+}
 
-  it('admin can create cash Expense with vendor_name inline and sees it in list', async () => {
+describe('ExpensesPage Slice 3', () => {
+  it('requires complete expense details and records an existing vendor', async () => {
     const user = userEvent.setup()
-    const { expensesStore } = mockHandlers()
+    const { submittedBodies } = mockHandlers()
     renderWithProviders(<ExpensesPage />)
 
-    // wait for selects to load
-    await screen.findByRole('heading', { name: /Expenses/i })
+    await user.type(await screen.findByLabelText(/^Amount$/i), '1234')
+    await user.click(screen.getByRole('combobox', { name: /^Vendor$/i }))
+    await user.click(await screen.findByRole('option', { name: 'MSEDCL' }))
+    await user.click(screen.getByRole('button', { name: /Record/i }))
 
-    // fill form
-    const dateInput = screen.getByLabelText(/business date/i)
-    await user.clear(dateInput)
-    await user.type(dateInput, '2099-06-10')
+    expect(await screen.findByText('Enter a narration')).toBeInTheDocument()
+    expect(submittedBodies).toHaveLength(0)
 
-    const amountInput = screen.getByLabelText(/^Amount$/i)
-    await user.clear(amountInput)
-    await user.type(amountInput, '1234')
+    await user.type(screen.getByLabelText(/Narration/i), 'June electricity bill')
+    await user.click(screen.getByRole('button', { name: /Record/i }))
 
-    const vendorInput = screen.getByPlaceholderText(/new vendor name/i)
-    await user.clear(vendorInput)
-    await user.type(vendorInput, 'NewVendorInline')
-
-    const narrationInput = screen.getByLabelText(/narration/i)
-    await user.clear(narrationInput)
-    await user.type(narrationInput, 'MSEDCL bill June')
-
-    // select Fund (use option role to disambiguate from trigger value)
-    await user.click(screen.getByTestId('expense-fund-select'))
-    await user.click(await screen.findByRole('option', { name: 'Main Fund' }))
-
-    // select Category
-    await user.click(screen.getByTestId('expense-category-select'))
-    await user.click(await screen.findByRole('option', { name: 'Electricity' }))
-
-    const submit = screen.getByRole('button', { name: /create expense|submit|record expense/i })
-    await user.click(submit)
-
-    await waitFor(() => {
-      expect(expensesStore.length).toBe(1)
-    })
-    // list should show the expense
-    expect(await screen.findByText(/1234/)).toBeInTheDocument()
-    expect(screen.getByText(/MSEDCL bill June/)).toBeInTheDocument()
-    // audit fields visible
-    expect(screen.getByText(/membership-1/)).toBeInTheDocument()
+    await waitFor(() => expect(submittedBodies[0]).toMatchObject({
+      amount: 1234,
+      vendor_id: 'vendor-msedcl',
+      narration: 'June electricity bill',
+    }))
+    const success = await screen.findByRole('dialog', { name: /Expense recorded/i })
+    expect(within(success).getByText('₹1,234')).toBeInTheDocument()
+    expect(within(success).getByText('MSEDCL')).toBeInTheDocument()
+    expect(within(success).getByText(/Expense expense-/i)).toBeInTheDocument()
   })
 
-  it('vendor_name reuses case-insensitively via inline creation', async () => {
+  it('creates a vendor explicitly inline and persists the expense in Activity', async () => {
+    const user = userEvent.setup()
+    const { expenses, submittedBodies, vendors } = mockHandlers()
+    renderWithProviders(<ExpensesPage />)
+
+    await user.type(await screen.findByLabelText(/^Amount$/i), '875')
+    await user.click(screen.getByRole('combobox', { name: /^Vendor$/i }))
+    await user.type(await screen.findByPlaceholderText(/Search vendor/i), 'Fresh Services')
+    await user.click(screen.getByRole('option', { name: 'Create “Fresh Services”' }))
+    await user.click(screen.getByRole('button', { name: /^Details/i }))
+    await user.type(screen.getByLabelText(/Narration/i), 'Water tank cleaning')
+    await user.click(screen.getByRole('button', { name: /Record ₹875/i }))
+
+    const success = await screen.findByRole('dialog', { name: /Expense recorded/i })
+    expect(within(success).getByText('Fresh Services')).toBeInTheDocument()
+    expect(submittedBodies[0]).toMatchObject({ vendor_name: 'Fresh Services' })
+    expect(vendors.filter((vendor) => vendor.name === 'Fresh Services')).toHaveLength(1)
+    expect(expenses).toHaveLength(1)
+
+    await user.click(within(success).getByRole('button', { name: /View activity/i }))
+    expect(await screen.findByRole('button', { name: /Fresh Services paid ₹875/i })).toBeInTheDocument()
+  })
+
+  it('keeps entered values and explains how to recover when recording fails', async () => {
     const user = userEvent.setup()
     mockHandlers()
+    server.use(http.post('*/api/expenses', () => HttpResponse.json({ detail: 'database exploded' }, { status: 500 })))
     renderWithProviders(<ExpensesPage />)
-    await screen.findByRole('heading', { name: /Expenses/i })
 
-    const dateInput = screen.getByLabelText(/business date/i)
-    const amountInput = screen.getByLabelText(/^Amount$/i)
-    const vendorInput = screen.getByPlaceholderText(/new vendor name/i)
+    await user.type(await screen.findByLabelText(/^Amount$/i), '640')
+    await user.click(screen.getByRole('combobox', { name: /^Vendor$/i }))
+    await user.click(await screen.findByRole('option', { name: 'MSEDCL' }))
+    await openDetails(user)
+    await user.type(screen.getByLabelText(/Narration/i), 'Failed expense remains')
+    await user.click(screen.getByRole('button', { name: /Record ₹640/i }))
 
-    // first expense with MSEDCL
-    await user.clear(dateInput); await user.type(dateInput, '2099-06-12')
-    await user.clear(amountInput); await user.type(amountInput, '100')
-    await user.clear(vendorInput); await user.type(vendorInput, 'MSEDCL')
-    await user.click(screen.getByTestId('expense-fund-select')); await user.click(await screen.findByRole('option', { name: 'Main Fund' }))
-    await user.click(screen.getByTestId('expense-category-select')); await user.click(await screen.findByRole('option', { name: 'Electricity' }))
-    await user.click(screen.getByRole('button', { name: /create expense|submit|record expense/i }))
-    await waitFor(() => expect(screen.getByText(/100/)).toBeInTheDocument())
-
-    // second expense with lower-case same vendor
-    await user.clear(dateInput); await user.type(dateInput, '2099-06-13')
-    await user.clear(amountInput); await user.type(amountInput, '200')
-    await user.clear(vendorInput); await user.type(vendorInput, 'msedcl')
-    await user.click(screen.getByRole('button', { name: /create expense|submit|record expense/i }))
-
-    // vendors list should not duplicate (only one MSEDCL)
-    await waitFor(() => {
-      const matches = vendors.filter((v) => v.name.toLowerCase() === 'msedcl')
-      expect(matches.length).toBe(1)
-    })
+    expect(await screen.findByRole('alert')).toHaveTextContent(/check your connection and try again/i)
+    expect(screen.getByLabelText(/^Amount$/i)).toHaveValue('640')
+    expect(screen.getByLabelText(/Narration/i)).toHaveValue('Failed expense remains')
+    expect(screen.getByRole('combobox', { name: /^Vendor$/i })).toHaveTextContent('MSEDCL')
   })
 
-  it('rejects zero and negative amounts with validation error', async () => {
+  it('shows human-readable, actionable expense rows without leaking internal IDs', async () => {
+    const user = userEvent.setup()
+    mockHandlers([{
+      id: 'expense-private-id',
+      business_date: '2099-06-18',
+      amount: 777,
+      fund_id: 'fund-main',
+      category_id: 'cat-electricity',
+      vendor_id: 'vendor-msedcl',
+      narration: 'Electricity bill',
+      created_by: 'membership-private-id',
+      created_at: '2099-06-18T10:30:00Z',
+    }])
+    renderWithProviders(<ExpensesPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
+
+    const row = await screen.findByRole('button', { name: /MSEDCL paid ₹777 on 18 Jun 2099/i })
+    expect(row).toHaveTextContent('Paid')
+    expect(row).toHaveTextContent('−₹777')
+    expect(screen.queryByText('membership-private-id')).not.toBeInTheDocument()
+    expect(screen.queryByText('cat-electricity')).not.toBeInTheDocument()
+
+    await user.click(row)
+    const detail = await screen.findByRole('dialog', { name: /Expense details/i })
+    expect(within(detail).getByText(/Main Fund/i)).toBeInTheDocument()
+    expect(within(detail).getByText('Recorded:')).toBeInTheDocument()
+    expect(within(detail).getAllByText(/18 Jun 2099/i).length).toBeGreaterThan(0)
+  })
+
+  it('filters Activity from the native filter sheet', async () => {
+    const user = userEvent.setup()
+    mockHandlers([{
+      id: 'expense-filtered', business_date: '2099-06-18', amount: 500, fund_id: 'fund-main', category_id: 'cat-electricity', vendor_id: 'vendor-msedcl', narration: 'Older', created_by: 'm1', created_at: '2099-06-18T10:00:00Z',
+    }])
+    renderWithProviders(<ExpensesPage />)
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
+    expect(await screen.findByText(/Older/)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Filters/i }))
+    const sheet = await screen.findByRole('dialog', { name: /Filters/i })
+    await user.type(within(sheet).getByLabelText(/From/i), '2099-06-19')
+    await user.click(within(sheet).getByRole('button', { name: /Apply filters/i }))
+
+    expect(await screen.findByText('No expenses yet')).toBeInTheDocument()
+    expect(screen.queryByText('Older')).not.toBeInTheDocument()
+  })
+
+  it('distinguishes an Activity loading failure from a genuine empty state', async () => {
     const user = userEvent.setup()
     mockHandlers()
+    server.use(http.get('*/api/expenses', () => HttpResponse.json({ detail: 'Unavailable' }, { status: 503 })))
     renderWithProviders(<ExpensesPage />)
-    await screen.findByRole('heading', { name: /Expenses/i })
+    await user.click(screen.getByRole('tab', { name: /Activity/i }))
 
-    const amountInput = screen.getByLabelText(/^Amount$/i)
-    await user.clear(amountInput)
-    await user.type(amountInput, '0')
-    await user.click(screen.getByRole('button', { name: /create expense|submit|record expense/i }))
-    expect(await screen.findByText(/amount.*> 0|must be.*positive|valid amount/i)).toBeInTheDocument()
-
-    await user.clear(amountInput)
-    await user.type(amountInput, '-5')
-    await user.click(screen.getByRole('button', { name: /create expense|submit|record expense/i }))
-    expect(await screen.findByText(/amount.*> 0|must be.*positive|valid amount/i)).toBeInTheDocument()
-  })
-
-  it('expense list is filterable by business_date and category/vendor/fund', async () => {
-    const user = userEvent.setup()
-    const expenses = [
-      { id: 'exp-a', business_date: '2099-06-20', amount: 500, fund_id: 'fund-main', category_id: 'cat-electricity', vendor_id: 'vendor-msedcl', narration: 'A', created_by: 'm1', created_at: new Date().toISOString() },
-      { id: 'exp-b', business_date: '2099-06-20', amount: 600, fund_id: 'fund-sinking', category_id: 'cat-salary', vendor_id: 'vendor-extra', narration: 'B', created_by: 'm1', created_at: new Date().toISOString() },
-    ]
-    mockHandlers({ expenses })
-    renderWithProviders(<ExpensesPage />)
-    // should show both initially (after filters applied)
-    // Apply fund filter
-    // Find filter controls
-    expect(await screen.findByText(/500/)).toBeInTheDocument()
-    expect(screen.getByText(/600/)).toBeInTheDocument()
-
-    // filter by business_date range that excludes one
-    const fromInput = screen.getByLabelText(/From/i)
-    await user.clear(fromInput)
-    await user.type(fromInput, '2099-06-21')
-    await user.click(screen.getByRole('button', { name: /Apply filters/i }))
-    await waitFor(() => {
-      expect(screen.queryByText(/500/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/600/)).not.toBeInTheDocument()
-    })
-  })
-
-  it('shows audit fields created_by and created_at in list rows', async () => {
-    const expenses = [
-      { id: 'exp-audit', business_date: '2099-06-18', amount: 777, fund_id: 'fund-main', category_id: 'cat-electricity', vendor_id: 'vendor-msedcl', narration: 'audit check', created_by: 'audit-member-123', created_at: '2099-06-18T10:00:00Z' },
-    ]
-    mockHandlers({ expenses })
-    renderWithProviders(<ExpensesPage />)
-    expect(await screen.findByText(/audit-member-123/)).toBeInTheDocument()
-    expect(screen.getAllByText(/2099-06-18/).length).toBeGreaterThan(0)
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not be loaded/i)
+    expect(screen.queryByText('No expenses yet')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Try again/i })).toBeInTheDocument()
   })
 })

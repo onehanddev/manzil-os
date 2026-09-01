@@ -1,5 +1,7 @@
-const _base = (process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://manzilos.vercel.app").replace(/\/$/, "");
-const APP_URL = _base.endsWith("/app") ? _base : `${_base}/app`;
+// Same-domain routing: landing at / , PWA at /app (proxied to frontend deployment via next.config rewrites)
+// NEXT_PUBLIC_APP_URL can still override for local dev (e.g. http://localhost:5173)
+const _base = process.env.NEXT_PUBLIC_APP_URL?.trim();
+const APP_URL = _base ? `${_base.replace(/\/$/, "")}${_base.endsWith("/app") ? "" : "/app"}` : "/app";
 
 export default function Page() {
   return (

@@ -64,6 +64,71 @@ def _get_roles_for_user(db: Session, user_id: str) -> tuple[str | None, list[str
     return society_id, roles
 
 
+def _get_memberships_for_user(db: Session, user_id: str) -> tuple[list[dict], bool, str | None, list[str]]:
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return [], False, None, []
+
+    rows = db.execute(
+        select(
+            SocietyMembership.id,
+            Society.id,
+            Society.name,
+            Society.location,
+            Society.city,
+            Role.key,
+        )
+        .join(Society, Society.id == SocietyMembership.society_id)
+        .join(MembershipRole, MembershipRole.society_membership_id == SocietyMembership.id)
+        .join(Role, Role.id == MembershipRole.role_id)
+        .where(SocietyMembership.user_id == uid, SocietyMembership.status == "ACTIVE")
+        .order_by(SocietyMembership.created_at.desc(), Role.key.asc())
+    ).all()
+    if not rows:
+        return [], False, None, []
+
+    memberships_by_id: dict[str, dict] = {}
+    for membership_id, society_id, society_name, society_location, society_city, role_key in rows:
+        key = str(membership_id)
+        entry = memberships_by_id.setdefault(
+            key,
+            {
+                "society": {
+                    "id": str(society_id),
+                    "name": society_name,
+                    "location": society_location,
+                    "city": society_city,
+                },
+                "roles": [],
+                "permissions": [],
+            },
+        )
+        if role_key not in entry["roles"]:
+            entry["roles"].append(role_key)
+
+    memberships: list[dict] = []
+    platform_admin = False
+    first_society_id: str | None = None
+    all_roles: list[str] = []
+    for entry in memberships_by_id.values():
+        roles = entry["roles"]
+        if "SOCIETY_ADMIN" in roles:
+            entry["permissions"] = ["*"]
+            platform_admin = True
+        else:
+            permissions: list[str] = []
+            if "COLLECTOR" in roles:
+                permissions.extend(["receipt:create", "report:view"])
+            entry["permissions"] = permissions
+        if first_society_id is None:
+            first_society_id = entry["society"]["id"]
+        all_roles.extend(roles)
+        memberships.append(entry)
+
+    return memberships, platform_admin, first_society_id, all_roles
+
+
 @router.post("/auth/login")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not is_supabase_configured():
@@ -226,11 +291,19 @@ def logout(current=Depends(get_current_user)):
 
 
 @router.get("/api/me")
-def get_me(current=Depends(get_current_user)):
+def get_me(current=Depends(get_current_user), db: Session = Depends(get_db)):
+    memberships, platform_admin, society_id, roles = _get_memberships_for_user(db=db, user_id=current["user_id"])
     return {
         "user_id": current["user_id"],
         "auth_user_id": current.get("auth_user_id"),
         "mobile": current["mobile"],
-        "roles": current["roles"],
-        "society_id": current["society_id"],
+        "roles": roles or current["roles"],
+        "society_id": society_id or current["society_id"],
+        "user": {
+            "id": current["user_id"],
+            "display_name": current["display_name"],
+            "mobile": current["mobile"],
+        },
+        "memberships": memberships,
+        "platform_admin": platform_admin or ("SOCIETY_ADMIN" in current.get("roles", [])),
     }

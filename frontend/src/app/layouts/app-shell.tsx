@@ -1,15 +1,19 @@
-import { useCallback, useEffect } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
   Bell,
   Building2,
-  ChevronDown,
+  ChevronRight,
   HandCoins,
   LayoutDashboard,
   LogOut,
   MoreHorizontal,
   PiggyBank,
+  Shapes,
+  Store,
+  Tags,
+  Users,
   Wallet,
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -43,23 +47,24 @@ type NavItem = {
   to: string
   label: string
   icon: typeof LayoutDashboard
+  group?: 'society' | 'financial'
+  summary?: string
 }
 
-/**
- * Phase 0 nav — keep only pilot cashbook surfaces.
- * Deferred to Phase 1: Billing, Members, Societies (multi-society), Settings.
- * See PHASE_0_PRD.md "Out of Scope".
- */
 const PRIMARY_NAV: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/receipts', label: 'Receipts', icon: HandCoins },
-  { to: '/expenses', label: 'Expenses', icon: Wallet },
+  { to: '/dashboard', label: 'Home', icon: LayoutDashboard },
+  { to: '/receipts', label: 'Collect', icon: HandCoins },
+  { to: '/expenses', label: 'Spend', icon: Wallet },
   { to: '/reports', label: 'Reports', icon: BarChart3 },
 ]
 
 const MORE_NAV: NavItem[] = [
-  { to: '/flats', label: 'Flats', icon: Building2 },
-  { to: '/funds', label: 'Funds', icon: PiggyBank },
+  { to: '/flats', label: 'Flats', icon: Building2, group: 'society', summary: 'Occupants, dues, and ledger' },
+  { to: '/people', label: 'People', icon: Users, group: 'society', summary: 'Owners, tenants, and contacts' },
+  { to: '/flat-categories', label: 'Flat categories', icon: Shapes, group: 'society', summary: 'Maintenance defaults' },
+  { to: '/funds', label: 'Funds', icon: PiggyBank, group: 'financial', summary: 'Receipt and expense buckets' },
+  { to: '/vendors', label: 'Vendors', icon: Store, group: 'financial', summary: 'Expense payees' },
+  { to: '/expense-categories', label: 'Expense categories', icon: Tags, group: 'financial', summary: 'Spending groups' },
 ]
 
 function getInitials(name: string | undefined) {
@@ -82,14 +87,26 @@ export function AppShell() {
   const queryClient = useQueryClient()
 
   const societies = me?.memberships?.map((m) => m.society) ?? []
-  const current = societies.find((s) => s.id === currentSocietyId) ?? null
+  const current = societies.find((s) => s.id === currentSocietyId) ?? societies[0] ?? null
   const currentMembership = me?.memberships?.find((membership) => membership.society.id === currentSocietyId) ?? me?.memberships?.[0]
   const currentRoles = (currentMembership?.roles ?? []) as string[]
-  const isAdmin = me?.platform_admin === true || currentRoles.includes('super_admin') || currentRoles.includes('SOCIETY_ADMIN')
-  const primaryNav = PRIMARY_NAV.filter((item) => item.to !== '/reports' || isAdmin)
+  const normalizedRoles = currentRoles.map((role) => role.toLowerCase())
+  const permissions = (currentMembership?.permissions ?? []) as string[]
+  const isAdmin = me?.platform_admin === true || normalizedRoles.includes('super_admin') || normalizedRoles.includes('society_admin')
+  const isCollector = normalizedRoles.includes('collector')
 
-  // Auto-select the first society once memberships load.
-  // Phase 0 is single-society; keep auto-select for demo/mock but do not expose multi-society UI.
+  const primaryNav = PRIMARY_NAV.filter((item) => {
+    if (item.to === '/reports') return isAdmin || permissions.includes('*') || permissions.includes('report:view')
+    if (item.to === '/expenses') {
+      // Collector without explicit expense permission should not see Spend
+      if (!isAdmin && isCollector) {
+        if (!permissions.includes('*') && !permissions.includes('expense:create') && !permissions.includes('expense:view')) return false
+      }
+    }
+    return true
+  })
+  const moreNav = MORE_NAV.filter(() => isAdmin)
+
   useEffect(() => {
     if (!currentSocietyId && societies.length > 0) {
       setCurrentSociety(societies[0].id)
@@ -100,15 +117,14 @@ export function AppShell() {
     try {
       if (supabase) await supabase.auth.signOut()
     } catch {
-      // Supabase signOut can throw when no session exists — local logout must still succeed.
+      // ignore
     }
-    // Best-effort backend logout — skip for demo-token (no valid JWT) to avoid 401-triggered hard redirect.
     const token = useAuthStore.getState().accessToken
     if (token && token !== 'demo-token') {
       try {
         await api.post('/auth/logout')
       } catch {
-        // ignore — local logout must succeed even if backend is unavailable
+        // ignore
       }
     }
     clearAuth()
@@ -118,20 +134,15 @@ export function AppShell() {
   }, [clearAuth, navigate, queryClient])
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pt-[env(safe-area-inset-top)]">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background print:h-auto print:overflow-visible">
+      <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pt-[env(safe-area-inset-top)] print:hidden">
         <div className="flex h-14 items-center gap-2 px-4">
           <NavLink to="/dashboard" className="mr-1 font-semibold tracking-tight">
             Manzil OS
           </NavLink>
           <div className="ml-auto flex items-center gap-1">
             <NotificationBell />
-            <SocietySwitcher
-              societies={societies}
-              current={current}
-              loading={isLoading}
-              onChange={setCurrentSociety}
-            />
+            <SocietyLabel societies={societies} current={current} loading={isLoading} />
             <UserMenu
               name={user?.displayName ?? me?.user.display_name}
               onLogout={handleLogout}
@@ -140,21 +151,21 @@ export function AppShell() {
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-6xl">
-        <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-56 shrink-0 flex-col border-r bg-muted/30 p-3 md:flex">
+      <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1">
+        <aside className="hidden h-full w-56 shrink-0 flex-col overflow-y-auto border-r bg-muted/30 p-3 md:flex print:hidden">
           <nav className="flex flex-col gap-1">
-            {[...primaryNav, ...MORE_NAV].map((item) => (
+            {[...primaryNav, ...moreNav].map((item) => (
               <SidebarLink key={item.to} item={item} />
             ))}
           </nav>
         </aside>
 
-        <main className="min-h-[calc(100dvh-3.5rem)] flex-1 px-4 py-6 pb-28 md:px-8 md:pb-8">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 pb-28 md:px-8 md:pb-8 print:overflow-visible print:p-0">
           <Outlet />
         </main>
       </div>
 
-      <MobileNav items={primaryNav} />
+      <MobileNav items={primaryNav} moreItems={moreNav} onLogout={handleLogout} />
     </div>
   )
 }
@@ -223,14 +234,15 @@ function SidebarLink({ item }: { item: NavItem }) {
   )
 }
 
-function MobileNav({ items }: { items: NavItem[] }) {
+function MobileNav({ items, moreItems, onLogout }: { items: NavItem[]; moreItems: NavItem[]; onLogout: () => void | Promise<void> }) {
+  const cols = items.length + 1
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)] md:hidden">
-      <div className="grid h-16 grid-cols-5">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)] md:hidden print:hidden" aria-label="Primary">
+      <div className="grid h-16" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {items.map((item) => (
           <MobileLink key={item.to} item={item} />
         ))}
-        <MoreSheet />
+        <MoreSheet items={moreItems} onLogout={onLogout} />
       </div>
     </nav>
   )
@@ -254,93 +266,105 @@ function MobileLink({ item }: { item: NavItem }) {
   )
 }
 
-function MoreSheet() {
+function MoreSheet({ items, onLogout }: { items: NavItem[]; onLogout: () => void | Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const location = useLocation()
+  const societyItems = items.filter((item) => item.group === 'society')
+  const financialItems = items.filter((item) => item.group === 'financial')
+  const isActive = items.some((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
+
   return (
-    <Sheet>
-      <SheetTrigger className="flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground">
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        aria-current={isActive ? 'page' : undefined}
+        className={cn(
+          'relative flex flex-col items-center justify-center gap-1 text-[11px] font-medium',
+          isActive ? 'text-primary' : 'text-muted-foreground',
+        )}
+      >
+        {isActive && <span className="absolute top-1 h-0.5 w-6 rounded-full bg-primary" aria-hidden />}
         <MoreHorizontal className="size-5" />
         More
       </SheetTrigger>
-      <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)]">
+      <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)] max-h-[92dvh] overflow-y-auto">
+        <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-border" aria-hidden />
         <SheetTitle className="mb-2 px-1 text-sm font-semibold">
           More
         </SheetTitle>
-        <div className="grid grid-cols-3 gap-2 p-1">
-          {MORE_NAV.map((item) => {
-            const Icon = item.icon
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    'flex flex-col items-center gap-2 rounded-xl border p-4 text-xs font-medium',
-                    isActive
-                      ? 'border-primary bg-primary/5 text-primary'
-                      : 'text-muted-foreground hover:bg-accent',
-                  )
-                }
-              >
-                <Icon className="size-5" />
-                {item.label}
-              </NavLink>
-            )
-          })}
+        {items.length === 0 ? (
+          <p className="px-1 py-6 text-center text-sm text-muted-foreground">
+            No additional settings for your role.
+          </p>
+        ) : (
+          <div className="space-y-5 px-1 pb-1">
+            <SettingsGroup title="Society setup" items={societyItems} onNavigate={() => setOpen(false)} />
+            <SettingsGroup title="Financial setup" items={financialItems} onNavigate={() => setOpen(false)} />
+          </div>
+        )}
+        <div className="border-t px-1 pt-4">
+          <p className="mb-2 px-2 text-xs font-semibold text-muted-foreground">Account</p>
+          <button
+            type="button"
+            onClick={() => { setOpen(false); void onLogout() }}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-xl px-3 text-left text-destructive transition-colors hover:bg-destructive/10 active:scale-[0.99]"
+          >
+            <span className="flex size-10 items-center justify-center rounded-xl bg-destructive/10"><LogOut className="size-5" /></span>
+            <span className="font-medium">Sign out</span>
+          </button>
         </div>
       </SheetContent>
     </Sheet>
   )
 }
 
-function SocietySwitcher({
+function SettingsGroup({ title, items, onNavigate }: { title: string; items: NavItem[]; onNavigate: () => void }) {
+  return (
+    <section>
+      <h3 className="mb-2 px-2 text-xs font-semibold text-muted-foreground">{title}</h3>
+      <div className="overflow-hidden rounded-2xl border bg-card">
+        {items.map((item, index) => {
+          const Icon = item.icon
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              onClick={onNavigate}
+              className={({ isActive }) => cn(
+                'flex min-h-[64px] items-center gap-3 px-3 py-2 transition-colors active:scale-[0.99]',
+                index > 0 && 'border-t',
+                isActive ? 'bg-primary/5 text-primary' : 'hover:bg-muted/50',
+              )}
+            >
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted"><Icon className="size-5" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">{item.label}</span>
+                <span className="block truncate text-xs text-muted-foreground">{item.summary}</span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </NavLink>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function SocietyLabel({
   societies,
   current,
   loading,
-  onChange,
 }: {
   societies: Society[]
   current: Society | null
   loading: boolean
-  onChange: (id: string) => void
 }) {
   if (loading) return <Skeleton className="h-4 w-24" />
-  // Phase 0 is single-society pilot; show name read-only.
-  // Keep lightweight switcher only when mock provides >1 society (demo).
-  if (societies.length <= 1) {
-    return (
-      <span className="max-w-32 truncate px-2 text-sm font-medium">
-        {current?.name ?? societies[0]?.name ?? 'Society'}
-      </span>
-    )
-  }
+  // Single-society pilot: always read-only label, never a dropdown/combobox.
+  // Range covers demo/mock with multiple societies — label still read-only.
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button variant="ghost" size="sm" className="gap-1 px-2 font-medium" />
-        }
-      >
-        <span className="max-w-32 truncate">
-          {current?.name ?? 'Select society'}
-        </span>
-        <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Societies</DropdownMenuLabel>
-        </DropdownMenuGroup>
-        {societies.map((s) => (
-          <DropdownMenuItem
-            key={s.id}
-            onClick={() => onChange(s.id)}
-            className="justify-between"
-          >
-            {s.name}
-            {s.id === current?.id && <span className="text-xs text-muted-foreground">Active</span>}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <span className="max-w-32 truncate px-2 text-sm font-medium" data-testid="society-label">
+      {current?.name ?? societies[0]?.name ?? 'Society'}
+    </span>
   )
 }
 
@@ -355,7 +379,7 @@ function UserMenu({
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
-          <Button variant="ghost" size="icon" className="rounded-full" />
+          <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account" />
         }
       >
         <Avatar className="size-8">

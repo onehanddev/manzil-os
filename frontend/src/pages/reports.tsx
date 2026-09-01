@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, MoreVertical } from 'lucide-react'
 import { api, ApiError } from '@/lib/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { NativeDateField } from '@/components/ui/native-date-field'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useMe } from '@/lib/api/hooks'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -87,6 +91,17 @@ function endOfWeek(d: Date) {
   return fmt(end)
 }
 
+function formatCurrency(amount: number) {
+  return `₹${Number(amount).toLocaleString('en-IN')}`
+}
+
+function formatDateShort(iso: string) {
+  const date = new Date(`${iso}T12:00:00`)
+  return Number.isNaN(date.getTime())
+    ? 'Date unavailable'
+    : date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 function vapidKeyToUint8Array(publicKey: string) {
   const padding = '='.repeat((4 - (publicKey.length % 4)) % 4)
   const base64 = (publicKey + padding).replace(/-/g, '+').replace(/_/g, '/')
@@ -105,7 +120,11 @@ export function ReportsPage() {
   const [from, setFrom] = useState(() => pushedToday ? todayStr() : searchParams.get('from') ?? startOfMonth(now))
   const [to, setTo] = useState(() => pushedToday ? todayStr() : searchParams.get('to') ?? endOfMonth(now))
   const [activePreset, setActivePreset] = useState<'today' | 'week' | 'month' | 'custom'>(pushedToday ? 'today' : 'month')
+  const [customRangeOpen, setCustomRangeOpen] = useState(false)
+  const [draftFrom, setDraftFrom] = useState(from)
+  const [draftTo, setDraftTo] = useState(to)
   const [openingInput, setOpeningInput] = useState('')
+  const [openingEditorOpen, setOpeningEditorOpen] = useState(false)
   const [selected, setSelected] = useState<{ kind: 'receipt' | 'expense'; data: Record<string, unknown> } | null>(null)
   const [showVoided, setShowVoided] = useState(false)
   const [selectedSummary, setSelectedSummary] = useState<'opening' | 'receipts' | 'expenses' | 'closing' | null>(null)
@@ -158,12 +177,19 @@ export function ReportsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cash-opening-balance'] })
       qc.invalidateQueries({ queryKey: ['cashbook-report'] })
+      setOpeningEditorOpen(false)
       toast.success('Opening balance saved')
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to save opening balance'),
   })
 
   function applyPreset(preset: 'today' | 'week' | 'month' | 'custom') {
+    if (preset === 'custom') {
+      setDraftFrom(from)
+      setDraftTo(to)
+      setCustomRangeOpen(true)
+      return
+    }
     const t = new Date()
     setOpeningInput('')
     if (preset === 'today') {
@@ -178,6 +204,15 @@ export function ReportsPage() {
       setTo(endOfMonth(t))
     }
     setActivePreset(preset)
+  }
+
+  function applyCustomRange() {
+    if (!draftFrom || !draftTo || draftFrom > draftTo) return
+    setOpeningInput('')
+    setFrom(draftFrom)
+    setTo(draftTo)
+    setActivePreset('custom')
+    setCustomRangeOpen(false)
   }
 
   async function downloadReport(format: 'xlsx' | 'pdf', range = { from, to }) {
@@ -253,6 +288,7 @@ export function ReportsPage() {
     }
     combined.sort((a, b) => a.date.localeCompare(b.date))
   }
+  const sourceDetail = detailQuery.data ?? selected?.data
 
   if (isLoadingMe) {
     return <p className="text-sm text-muted-foreground">Loading access...</p>
@@ -272,8 +308,8 @@ export function ReportsPage() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="flex h-[calc(100dvh-12rem-1px)] flex-col gap-4 overflow-hidden md:h-auto md:overflow-visible">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 print:hidden">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Cashbook Report</h1>
           {report ? (
@@ -284,22 +320,29 @@ export function ReportsPage() {
             <p className="mt-1 text-sm text-muted-foreground">Opening → closing · business date inclusive</p>
           )}
         </div>
-        <Button variant="outline" size="sm" disabled={isEnablingNotifications || notificationsEnabled} onClick={enableNotifications}>
-          {notificationsEnabled ? 'Notifications enabled' : isEnablingNotifications ? 'Enabling notifications...' : 'Enable notifications'}
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap gap-2 print:hidden">
-        <Button variant={tab === 'current' ? 'default' : 'outline'} size="sm" onClick={() => setTab('current')}>Current</Button>
-        <Button variant={tab === 'history' ? 'default' : 'outline'} size="sm" onClick={() => setTab('history')}>History</Button>
-        <Button variant="outline" size="sm" onClick={() => downloadReport('xlsx')}>Download XLSX</Button>
-        <Button variant="outline" size="sm" onClick={() => downloadReport('pdf')}>Download PDF</Button>
-        <Button variant="outline" size="sm" onClick={() => window.print()}>Print report</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="Report actions" className="min-h-11 min-w-11 print:hidden" />}>
+            <MoreVertical className="size-5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 print:hidden">
+            <DropdownMenuItem className="min-h-11" onClick={() => downloadReport('xlsx')}>Export XLSX</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => downloadReport('pdf')}>Export PDF</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => window.print()}>Print report</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => setTab('history')}>Report history</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" onClick={() => setOpeningEditorOpen(true)}>Edit opening cash</DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11" disabled={isEnablingNotifications || notificationsEnabled} onClick={enableNotifications}>
+              {notificationsEnabled ? 'Notifications enabled' : isEnablingNotifications ? 'Enabling notifications...' : 'Enable notifications'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {tab === 'history' && (
-        <Card>
-          <CardHeader><CardTitle className="text-sm">Report history</CardTitle></CardHeader>
+        <Card className="flex-1 overflow-y-auto overscroll-contain">
+          <CardHeader className="flex-row items-center justify-between gap-3">
+            <CardTitle className="text-base">Report history</CardTitle>
+            <Button variant="outline" className="min-h-11" onClick={() => setTab('current')}>Back to report</Button>
+          </CardHeader>
           <CardContent className="space-y-3">
             {historyQuery.isLoading && <p className="text-sm text-muted-foreground">Loading history...</p>}
             {historyQuery.data?.runs.length === 0 && <p className="text-sm text-muted-foreground">No saved exports yet</p>}
@@ -307,119 +350,163 @@ export function ReportsPage() {
               <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 border-b pb-2 text-sm last:border-0">
                 <span>{run.from} to {run.to} · ₹{run.closing.toLocaleString('en-IN')}</span>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => { setFrom(run.from); setTo(run.to); setTab('current') }}>View</Button>
-                  <Button size="sm" variant="outline" onClick={() => downloadReport('xlsx', run)}>XLSX</Button>
-                  <Button size="sm" variant="outline" onClick={() => downloadReport('pdf', run)}>PDF</Button>
+                  <Button className="min-h-11" variant="outline" onClick={() => { setFrom(run.from); setTo(run.to); setTab('current') }}>View</Button>
+                  <Button className="min-h-11" variant="outline" onClick={() => downloadReport('xlsx', run)}>XLSX</Button>
+                  <Button className="min-h-11" variant="outline" onClick={() => downloadReport('pdf', run)}>PDF</Button>
                 </div>
               </div>
             ))}
             {(historyQuery.data?.total ?? 0) > 10 && (
               <div className="flex justify-between">
-                <Button size="sm" variant="outline" disabled={historyPage === 1} onClick={() => setHistoryPage((page) => page - 1)}>Previous</Button>
-                <Button size="sm" variant="outline" disabled={historyPage * 10 >= (historyQuery.data?.total ?? 0)} onClick={() => setHistoryPage((page) => page + 1)}>Next</Button>
+                <Button className="min-h-11" variant="outline" disabled={historyPage === 1} onClick={() => setHistoryPage((page) => page - 1)}>Previous</Button>
+                <Button className="min-h-11" variant="outline" disabled={historyPage * 10 >= (historyQuery.data?.total ?? 0)} onClick={() => setHistoryPage((page) => page + 1)}>Next</Button>
               </div>
             )}
           </CardContent>
         </Card>
       )}
 
-      <Card className={tab === 'history' ? 'hidden print:hidden' : 'print:hidden'}>
-        <CardHeader>
-          <CardTitle className="text-sm">Report range</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <Button variant={activePreset === 'today' ? 'default' : 'outline'} size="sm" onClick={() => applyPreset('today')}>
-              Today
-            </Button>
-            <Button variant={activePreset === 'week' ? 'default' : 'outline'} size="sm" onClick={() => applyPreset('week')}>
-              This Week
-            </Button>
-            <Button variant={activePreset === 'month' ? 'default' : 'outline'} size="sm" onClick={() => applyPreset('month')}>
-              This Month
-            </Button>
-            <Button variant={activePreset === 'custom' ? 'default' : 'outline'} size="sm" onClick={() => setActivePreset('custom')}>
-              Custom
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label htmlFor="report-from">From</Label>
-              <Input id="report-from" type="date" value={from} onChange={(e) => { setOpeningInput(''); setFrom(e.target.value); setActivePreset('custom') }} />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="report-to">To</Label>
-              <Input id="report-to" type="date" value={to} onChange={(e) => { setTo(e.target.value); setActivePreset('custom') }} />
-            </div>
+      <Card className={tab === 'history' ? 'hidden print:hidden' : 'shrink-0 border-0 bg-background/95 shadow-none print:hidden'}>
+        <CardContent className="p-1">
+          <div role="group" aria-label="Report range" className="grid grid-cols-4 gap-1 rounded-xl bg-muted p-1">
+            {([
+              ['today', 'Today'],
+              ['week', 'Week'],
+              ['month', 'Month'],
+              ['custom', 'Custom'],
+            ] as const).map(([preset, label]) => (
+              <button
+                key={preset}
+                type="button"
+                aria-pressed={activePreset === preset}
+                className={`min-h-11 rounded-lg px-2 text-sm font-medium transition-colors ${activePreset === preset ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground'}`}
+                onClick={() => applyPreset(preset)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           {reportQuery.isFetching && <p className="text-xs text-muted-foreground">Loading report…</p>}
           {isForbidden && <p className="text-sm text-destructive" role="alert">Admin only — collector cannot view full cashbook totals</p>}
           {isUnauth && <p className="text-sm text-destructive">Not authenticated</p>}
-          {reportQuery.error && !isForbidden && !isUnauth && <p className="text-sm text-destructive">{reportQuery.error.message}</p>}
+          {reportQuery.error && !isForbidden && !isUnauth && (
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+              <span>Cashbook could not be loaded. Check your connection and try again.</span>
+              <Button variant="outline" size="sm" className="min-h-11 shrink-0" onClick={() => reportQuery.refetch()}>
+                Try again
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      <Card className={tab === 'history' ? 'hidden print:hidden' : 'print:hidden'}>
-        <CardHeader>
-          <CardTitle className="text-sm">Cash opening balance for {from}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {openingQuery.isFetching && <p className="text-xs text-muted-foreground">Loading opening…</p>}
-          {openingQuery.data?.exists === false && !openingQuery.isFetching && (
-            <p className="text-xs text-amber-600">No opening set for this date — enter amount and save</p>
-          )}
-          <div className="flex gap-2">
-            <Label htmlFor="opening-balance" className="sr-only">
-              Opening balance
-            </Label>
+      <Sheet open={customRangeOpen} onOpenChange={setCustomRangeOpen}>
+        <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+          <SheetHeader>
+            <SheetTitle className="text-xl">Custom range</SheetTitle>
+            <SheetDescription>Choose both dates, then apply the range.</SheetDescription>
+          </SheetHeader>
+          <div className="grid gap-4 px-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="report-from">From</Label>
+              <NativeDateField id="report-from" ariaLabel="From" value={draftFrom} onChange={setDraftFrom} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="report-to">To</Label>
+              <NativeDateField id="report-to" ariaLabel="To" value={draftTo} onChange={setDraftTo} />
+            </div>
+          </div>
+          <SheetFooter>
+            <Button className="min-h-12" disabled={!draftFrom || !draftTo || draftFrom > draftTo} onClick={applyCustomRange}>
+              Apply range
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={openingEditorOpen} onOpenChange={setOpeningEditorOpen}>
+        <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+          <SheetHeader>
+            <SheetTitle className="text-xl">Edit opening cash</SheetTitle>
+            <SheetDescription>Cash on hand at the start of {formatDateShort(from)}.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-2 px-4">
+            <Label htmlFor="opening-balance">Opening balance</Label>
             <Input
               id="opening-balance"
               aria-label="Opening balance"
+              className="min-h-12 text-base tabular-nums"
               type="text"
               inputMode="numeric"
-              placeholder="Amount for selected from date"
+              placeholder="₹0"
               value={openingInput}
-              onChange={(e) => setOpeningInput(e.target.value)}
+              onChange={(event) => setOpeningInput(event.target.value)}
             />
-            <Button
-              disabled={openingQuery.isFetching || saveOpening.isPending || openingInput === '' || Number(openingInput) < 0}
-              onClick={() => {
-                if (Number(openingInput) < 0) {
-                  toast.error('amount must be >= 0')
-                  return
-                }
-                saveOpening.mutate()
-              }}
-            >
-              {saveOpening.isPending ? 'Saving…' : 'Save opening'}
-            </Button>
+            {openingQuery.data?.exists === false && !openingQuery.isFetching && (
+              <p className="text-sm text-muted-foreground">No opening cash has been set for this date.</p>
+            )}
           </div>
-          <p className="text-[11px] text-muted-foreground">Keyed by (society, opening_date) · amount ≥ 0 · admin-only</p>
-        </CardContent>
-      </Card>
+          <SheetFooter>
+            <Button
+              className="min-h-12"
+              disabled={openingQuery.isFetching || saveOpening.isPending || openingInput === '' || Number(openingInput) < 0}
+              onClick={() => saveOpening.mutate()}
+            >
+              {saveOpening.isPending ? 'Saving...' : 'Save opening cash'}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
 
+      <div className={tab === 'history' ? 'hidden' : 'flex-1 space-y-4 overflow-y-auto overscroll-contain pb-28 md:overflow-visible md:pb-0 print:overflow-visible print:pb-0'}>
+      {reportQuery.isLoading && (
+        <div className="space-y-4" aria-label="Loading cashbook report">
+          <Skeleton className="h-48 rounded-xl" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+      )}
       {report && (
-        <Card className={tab === 'history' ? 'hidden print:hidden' : ''}>
-          <CardHeader>
-            <CardTitle className="text-sm">Summary</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-              <button type="button" className="rounded-lg border p-3 text-left" onClick={() => setSelectedSummary('opening')}>
-                <div className="text-xs text-muted-foreground">Opening</div>
-                <div className="text-base font-semibold" data-testid="summary-opening">₹{report.opening.toLocaleString('en-IN')}</div>
+        <Card className={tab === 'history' ? 'hidden print:hidden' : 'overflow-hidden'}>
+          <CardContent className="p-0">
+            <div className="bg-primary px-5 py-6 text-primary-foreground">
+              <p className="text-sm font-medium opacity-80">Closing cash</p>
+              <p className="mt-1 text-[2rem] font-bold leading-tight tabular-nums" data-testid="summary-closing">
+                {formatCurrency(report.closing)}
+              </p>
+              <p className="mt-2 text-sm opacity-80">As of {formatDateShort(to)}</p>
+            </div>
+            <div className="divide-y">
+              <button
+                type="button"
+                className="flex min-h-[60px] w-full items-center gap-3 px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted"
+                onClick={() => setSelectedSummary('opening')}
+              >
+                <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">₹</span>
+                <span className="flex-1 font-medium">Opening cash</span>
+                <span className="font-semibold tabular-nums" data-testid="summary-opening">{formatCurrency(report.opening)}</span>
+                <ChevronRight className="size-4 text-muted-foreground" />
               </button>
-              <button type="button" className="rounded-lg border p-3 text-left" onClick={() => setSelectedSummary('receipts')}>
-                <div className="text-xs text-muted-foreground">Total receipts</div>
-                <div className="text-base font-semibold text-emerald-600" data-testid="summary-receipts">₹{report.total_receipts.toLocaleString('en-IN')}</div>
+              <button
+                type="button"
+                className="flex min-h-[60px] w-full items-center gap-3 px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted"
+                onClick={() => setSelectedSummary('receipts')}
+              >
+                <span className="flex size-9 items-center justify-center rounded-full bg-success-subtle text-success"><ArrowDownLeft className="size-5" /></span>
+                <span className="flex-1 font-medium">Received</span>
+                <span className="font-semibold tabular-nums" data-testid="summary-receipts">+{formatCurrency(report.total_receipts)}</span>
+                <ChevronRight className="size-4 text-muted-foreground" />
               </button>
-              <button type="button" className="rounded-lg border p-3 text-left" onClick={() => setSelectedSummary('expenses')}>
-                <div className="text-xs text-muted-foreground">Total expenses</div>
-                <div className="text-base font-semibold text-red-600" data-testid="summary-expenses">₹{report.total_expenses.toLocaleString('en-IN')}</div>
-              </button>
-              <button type="button" className="rounded-lg border bg-muted/30 p-3 text-left" onClick={() => setSelectedSummary('closing')}>
-                <div className="text-xs text-muted-foreground">Closing = opening + receipts − expenses</div>
-                <div className="text-base font-semibold" data-testid="summary-closing">₹{report.closing.toLocaleString('en-IN')}</div>
+              <button
+                type="button"
+                className="flex min-h-[60px] w-full items-center gap-3 px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted"
+                onClick={() => setSelectedSummary('expenses')}
+              >
+                <span className="flex size-9 items-center justify-center rounded-full bg-danger-subtle text-destructive"><ArrowUpRight className="size-5" /></span>
+                <span className="flex-1 font-medium">Paid</span>
+                <span className="font-semibold tabular-nums" data-testid="summary-expenses">−{formatCurrency(report.total_expenses)}</span>
+                <ChevronRight className="size-4 text-muted-foreground" />
               </button>
             </div>
           </CardContent>
@@ -430,9 +517,14 @@ export function ReportsPage() {
         <Card className={tab === 'history' ? 'hidden print:hidden' : ''}>
           <CardHeader>
             <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-sm">Combined statement — receipts &amp; expenses</CardTitle>
-              <Button variant="outline" size="sm" onClick={() => setShowVoided((value) => !value)}>
-                {showVoided ? 'Hide voided receipts' : 'Show voided receipts'}
+              <CardTitle className="text-base">Cash movements</CardTitle>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                aria-label={showVoided ? 'Hide voided receipts' : 'Show voided receipts'}
+                onClick={() => setShowVoided((value) => !value)}
+              >
+                {showVoided ? 'Hide voided' : 'Voided'}
               </Button>
             </div>
           </CardHeader>
@@ -460,7 +552,35 @@ export function ReportsPage() {
             {combined.length === 0 ? (
               <p className="text-sm text-muted-foreground">No receipts or expenses in this range</p>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="divide-y md:hidden">
+                {combined.map((row) => {
+                  const isReceipt = row.kind === 'receipt'
+                  const title = row.narration ?? (isReceipt ? 'Receipt' : 'Expense')
+                  const context = isReceipt
+                    ? `Flat ${(row.raw.flat as CashbookReport['receipts'][number]['flat'] | undefined)?.flat_number ?? 'Unknown'} · ${(row.raw.fund as CashbookReport['receipts'][number]['fund'] | null)?.name ?? 'No fund'}`
+                    : `${(row.raw.vendor as CashbookReport['expenses'][number]['vendor'] | null)?.name ?? 'No vendor'} · ${(row.raw.category as CashbookReport['expenses'][number]['category'] | undefined)?.name ?? 'Uncategorised'}`
+                  return (
+                    <button
+                      type="button"
+                      key={`${row.kind}-${row.id}`}
+                      className="flex min-h-[72px] w-full items-center gap-3 py-3 text-left transition-colors active:bg-muted"
+                      onClick={() => setSelected({ kind: row.kind, data: row.raw })}
+                    >
+                      <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${isReceipt ? 'bg-success-subtle text-success' : 'bg-danger-subtle text-destructive'}`}>
+                        {isReceipt ? <ArrowDownLeft className="size-5" /> : <ArrowUpRight className="size-5" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{isReceipt ? 'Received' : 'Paid'} · {title}</span>
+                        <span className="block truncate text-sm text-muted-foreground">{formatDateShort(row.date)} · {context}</span>
+                      </span>
+                      <span className="shrink-0 font-semibold tabular-nums">{isReceipt ? '+' : '−'}{formatCurrency(row.amount)}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {combined.length > 0 && (
+              <div className="hidden overflow-x-auto md:block print:block">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-xs text-muted-foreground">
@@ -484,8 +604,8 @@ export function ReportsPage() {
                             {row.narration ?? 'View source'}
                           </button>
                         </td>
-                        <td className="py-2 text-right text-emerald-600">{row.kind === 'receipt' ? `₹${row.amount.toLocaleString('en-IN')}` : '—'}</td>
-                        <td className="py-2 text-right text-red-600">{row.kind === 'expense' ? `₹${row.amount.toLocaleString('en-IN')}` : '—'}</td>
+                        <td className="py-2 text-right text-success">{row.kind === 'receipt' ? `₹${row.amount.toLocaleString('en-IN')}` : '—'}</td>
+                        <td className="py-2 text-right text-destructive">{row.kind === 'expense' ? `₹${row.amount.toLocaleString('en-IN')}` : '—'}</td>
                         <td className="py-2 text-xs text-muted-foreground">
                           {row.kind === 'receipt'
                             ? `${(row.raw.flat as CashbookReport['receipts'][number]['flat'] | undefined)?.flat_number ?? (row.raw.flat_id as string)?.slice(0, 8) ?? '—'} · ${(row.raw.fund as CashbookReport['receipts'][number]['fund'])?.name ?? (row.raw.fund_id as string)?.slice(0, 8) ?? '—'}`
@@ -497,41 +617,127 @@ export function ReportsPage() {
                 </table>
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground">Every total is drillable — tap a row to see source receipt/expense record</p>
+            <p className="text-xs text-muted-foreground">Every total is drillable. Tap a row to see its source record.</p>
           </CardContent>
         </Card>
       )}
+      </div>
 
-      <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{selected?.kind === 'receipt' ? 'Receipt detail' : 'Expense detail'}</DialogTitle>
-          </DialogHeader>
-          {selected && detailQuery.isLoading && <p className="text-sm text-muted-foreground">Loading source record...</p>}
-          {selected && detailQuery.data && (
-            <div className="space-y-2 text-sm">
-              {Object.entries(detailQuery.data).map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-2 border-b py-1 last:border-0">
-                  <span className="text-muted-foreground">{k}</span>
-                  <span className="font-mono text-xs">{typeof v === 'object' ? JSON.stringify(v) : String(v ?? '—')}</span>
+      <Sheet open={!!selectedSummary} onOpenChange={(open) => !open && setSelectedSummary(null)}>
+        <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+          <SheetHeader>
+            <SheetTitle className="text-xl">
+              {selectedSummary === 'receipts' ? 'Money received' : selectedSummary === 'expenses' ? 'Money paid' : selectedSummary === 'opening' ? 'Opening cash' : 'Closing cash'}
+            </SheetTitle>
+            <SheetDescription>{formatDateShort(from)} to {formatDateShort(to)}</SheetDescription>
+          </SheetHeader>
+          <div className="divide-y px-4">
+            {selectedSummary === 'opening' && (
+              <div className="flex min-h-[64px] items-center justify-between gap-4">
+                <span className="text-muted-foreground">Balance brought forward</span>
+                <span className="font-semibold tabular-nums">{formatCurrency(report?.opening ?? 0)}</span>
+              </div>
+            )}
+            {selectedSummary === 'receipts' && report?.receipts.map((receipt) => (
+              <button
+                type="button"
+                key={receipt.id}
+                className="flex min-h-[68px] w-full items-center justify-between gap-4 py-3 text-left"
+                onClick={() => {
+                  setSelectedSummary(null)
+                  setSelected({ kind: 'receipt', data: receipt as unknown as Record<string, unknown> })
+                }}
+              >
+                <span>
+                  <span className="block font-medium">{receipt.narration ?? `Receipt from flat ${receipt.flat?.flat_number ?? 'unknown'}`}</span>
+                  <span className="block text-sm text-muted-foreground">{formatDateShort(receipt.business_date)} · Flat {receipt.flat?.flat_number ?? 'Unknown'}</span>
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums">+{formatCurrency(receipt.amount)}</span>
+              </button>
+            ))}
+            {selectedSummary === 'expenses' && report?.expenses.map((expense) => (
+              <button
+                type="button"
+                key={expense.id}
+                className="flex min-h-[68px] w-full items-center justify-between gap-4 py-3 text-left"
+                onClick={() => {
+                  setSelectedSummary(null)
+                  setSelected({ kind: 'expense', data: expense as unknown as Record<string, unknown> })
+                }}
+              >
+                <span>
+                  <span className="block font-medium">{expense.narration ?? expense.category.name}</span>
+                  <span className="block text-sm text-muted-foreground">{formatDateShort(expense.business_date)} · {expense.vendor?.name ?? 'No vendor'}</span>
+                </span>
+                <span className="shrink-0 font-semibold tabular-nums">−{formatCurrency(expense.amount)}</span>
+              </button>
+            ))}
+            {selectedSummary === 'closing' && (
+              <p className="py-4 text-sm tabular-nums">
+                {formatCurrency(report?.opening ?? 0)} + {formatCurrency(report?.total_receipts ?? 0)} − {formatCurrency(report?.total_expenses ?? 0)} = {formatCurrency(report?.closing ?? 0)}
+              </p>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
+        <SheetContent side="bottom" className="max-h-[92dvh] overflow-y-auto rounded-t-3xl pb-[env(safe-area-inset-bottom)]">
+          <div className="mx-auto mt-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+          <SheetHeader>
+            <SheetTitle className="text-xl">{selected?.kind === 'receipt' ? 'Receipt details' : 'Expense details'}</SheetTitle>
+            <SheetDescription>Source movement included in this cashbook report.</SheetDescription>
+          </SheetHeader>
+          {selected && detailQuery.isLoading && <p className="px-4 text-sm text-muted-foreground">Loading details...</p>}
+          {selected && detailQuery.isError && <p className="mx-4 rounded-xl bg-destructive/10 p-3 text-sm text-destructive" role="alert">Details could not be loaded. Close this sheet and try again.</p>}
+          {selected && sourceDetail && !detailQuery.isLoading && (
+            <div className="divide-y px-4 text-sm">
+              <div className="flex min-h-[56px] items-center justify-between gap-4">
+                <span className="text-muted-foreground">Amount</span>
+                <span className="font-semibold tabular-nums">{formatCurrency(Number(sourceDetail.amount ?? 0))}</span>
+              </div>
+              <div className="flex min-h-[56px] items-center justify-between gap-4">
+                <span className="text-muted-foreground">Date</span>
+                <span>{formatDateShort(String(sourceDetail.business_date ?? ''))}</span>
+              </div>
+              {selected.kind === 'receipt' ? (
+                <>
+                  <div className="flex min-h-[56px] items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Flat</span>
+                    <span>{(sourceDetail.flat as CashbookReport['receipts'][number]['flat'] | undefined)?.flat_number ?? 'Unknown flat'}</span>
+                  </div>
+                  <div className="flex min-h-[56px] items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Type</span>
+                    <span className="capitalize">{String(sourceDetail.type ?? 'Regular').toLowerCase()}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex min-h-[56px] items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Vendor</span>
+                    <span>{(sourceDetail.vendor as CashbookReport['expenses'][number]['vendor'] | undefined)?.name ?? 'No vendor'}</span>
+                  </div>
+                  <div className="flex min-h-[56px] items-center justify-between gap-4">
+                    <span className="text-muted-foreground">Category</span>
+                    <span>{(sourceDetail.category as CashbookReport['expenses'][number]['category'] | undefined)?.name ?? 'Uncategorised'}</span>
+                  </div>
+                </>
+              )}
+              <div className="flex min-h-[56px] items-center justify-between gap-4">
+                <span className="text-muted-foreground">Fund</span>
+                <span>{(sourceDetail.fund as CashbookReport['receipts'][number]['fund'] | undefined)?.name ?? 'No fund'}</span>
+              </div>
+              {Boolean(sourceDetail.narration) && (
+                <div className="py-4">
+                  <span className="block text-muted-foreground">Narration</span>
+                  <span className="mt-1 block">{String(sourceDetail.narration)}</span>
                 </div>
-              ))}
+              )}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={!!selectedSummary} onOpenChange={(open) => !open && setSelectedSummary(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{selectedSummary ? `${selectedSummary[0].toUpperCase()}${selectedSummary.slice(1)} sources` : 'Summary sources'}</DialogTitle>
-          </DialogHeader>
-          {selectedSummary === 'opening' && <p className="text-sm">Opening balance for {from}: ₹{report?.opening.toLocaleString('en-IN')}</p>}
-          {selectedSummary === 'receipts' && report?.receipts.map((receipt) => <p key={receipt.id} className="text-sm">{receipt.business_date} · {receipt.narration ?? receipt.id} · ₹{Number(receipt.amount).toLocaleString('en-IN')}</p>)}
-          {selectedSummary === 'expenses' && report?.expenses.map((expense) => <p key={expense.id} className="text-sm">{expense.business_date} · {expense.narration ?? expense.id} · ₹{Number(expense.amount).toLocaleString('en-IN')}</p>)}
-          {selectedSummary === 'closing' && <p className="text-sm">₹{report?.opening.toLocaleString('en-IN')} + ₹{report?.total_receipts.toLocaleString('en-IN')} - ₹{report?.total_expenses.toLocaleString('en-IN')} = ₹{report?.closing.toLocaleString('en-IN')}</p>}
-        </DialogContent>
-      </Dialog>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }

@@ -50,14 +50,16 @@ function mockCashbook(overrides: {
 }
 
 describe('ReportsPage — T2 Cashbook Report Core', () => {
-  it('shows opening editor inline on reports page for selected from date', async () => {
+  it('shows the opening editor from report actions for the selected from date', async () => {
+    const user = userEvent.setup()
     mockCashbook({ opening: 206394 })
     renderWithProviders(<ReportsPage />)
     expect(await screen.findByRole('heading', { name: /Cashbook Report/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Report actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Edit opening cash' }))
     const input = await screen.findByLabelText(/Opening balance/i)
     expect(input).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Save opening/i })).toBeInTheDocument()
-    // should allow saving
+    expect(screen.getByRole('button', { name: /Save opening cash/i })).toBeInTheDocument()
     await waitFor(() => expect(input).toHaveValue('206394'))
   })
 
@@ -89,7 +91,9 @@ describe('ReportsPage — T2 Cashbook Report Core', () => {
     await waitFor(() => {
       expect(screen.getByTestId('summary-closing')).toHaveTextContent('2,44,294')
     })
-    await user.click(screen.getByRole('button', { name: /Save opening/i }))
+    await user.click(screen.getByRole('button', { name: 'Report actions' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Edit opening cash' }))
+    await user.click(screen.getByRole('button', { name: /Save opening cash/i }))
     await waitFor(() => expect(savedOpening?.amount).toBe(206394))
   })
 
@@ -111,14 +115,15 @@ describe('ReportsPage — T2 Cashbook Report Core', () => {
     await screen.findByRole('heading', { name: /Cashbook Report/i })
     await user.click(screen.getByRole('button', { name: 'Today' }))
     await waitFor(() => expect(lastFrom).toBe(lastTo))
-    await user.click(screen.getByRole('button', { name: 'This Week' }))
+    await user.click(screen.getByRole('button', { name: 'Week' }))
     await waitFor(() => expect(lastFrom <= lastTo).toBe(true))
-    await user.click(screen.getByRole('button', { name: 'This Month' }))
+    await user.click(screen.getByRole('button', { name: 'Month' }))
     await waitFor(() => expect(lastFrom.slice(0, 7)).toBe(lastTo.slice(0, 7)))
-    // custom via date inputs
+    await user.click(screen.getByRole('button', { name: 'Custom' }))
     const fromInput = screen.getByLabelText('From')
     await user.clear(fromInput)
     await user.type(fromInput, '2026-07-01')
+    await user.click(screen.getByRole('button', { name: 'Apply range' }))
     await waitFor(() => expect(lastFrom).toBe('2026-07-01'))
   })
 
@@ -136,15 +141,13 @@ describe('ReportsPage — T2 Cashbook Report Core', () => {
       http.get('*/api/expenses/e-drill', () => HttpResponse.json(expenses[0])),
     )
     renderWithProviders(<ReportsPage />)
-    await screen.findByText(/Combined statement/i)
-    expect(await screen.findByText(/Drill me/)).toBeInTheDocument()
-    expect(screen.getByText(/Expense drill/)).toBeInTheDocument()
-    expect(screen.getByText(/A-101 · Main Fund/)).toBeInTheDocument()
-    expect(screen.getByText(/Electricity · MSEDCL · Main Fund/)).toBeInTheDocument()
-    // tap row to open detail sheet/dialog
-    await user.click(screen.getByRole('button', { name: 'Drill me' }))
-    expect(await screen.findByText(/Receipt detail/i)).toBeInTheDocument()
-    expect(screen.getByText('r-drill')).toBeInTheDocument()
+    await screen.findByText(/Cash movements/i)
+    expect(await screen.findByRole('button', { name: /Received.*Drill me.*A-101.*Main Fund/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Paid.*Expense drill.*MSEDCL.*Electricity/i })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Received.*Drill me/i }))
+    expect(await screen.findByRole('heading', { name: /Receipt details/i })).toBeInTheDocument()
+    expect(screen.getByText('A-101')).toBeInTheDocument()
+    expect(screen.queryByText('r-drill')).not.toBeInTheDocument()
   })
 
   it('lets admins reveal voided receipt history without adding it to report totals', async () => {
@@ -162,7 +165,7 @@ describe('ReportsPage — T2 Cashbook Report Core', () => {
       }),
     )
     renderWithProviders(<ReportsPage />)
-    await screen.findByText(/Summary/i)
+    await screen.findByText(/Closing cash/i)
     await user.click(screen.getByRole('button', { name: /Show voided receipts/i }))
     expect(await screen.findByText(/Correction/)).toBeInTheDocument()
     expect(screen.getByTestId('summary-receipts')).toHaveTextContent('0')
@@ -223,8 +226,8 @@ describe('ReportsPage — T2 Cashbook Report Core', () => {
       ),
     )
     renderWithProviders(<ReportsPage />)
-    expect(await screen.findByText(/inside/)).toBeInTheDocument()
-    expect(screen.queryByText(/outside/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /Received.*inside/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Received.*outside/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/99999/)).not.toBeInTheDocument()
   })
 })
