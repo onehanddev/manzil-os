@@ -15,7 +15,7 @@ curl http://127.0.0.1:8000/health  # -> {"status":"ok","db":"ok"}
 curl http://127.0.0.1:8000/docs
 ```
 
-Backend port is **not** in `backend/.env` — `backend/app/__main__.py:10` reads `$PORT` else `8000` (uvicorn default). Frontend port is `frontend/vite.config.ts:57` (`5173`) with `frontend/.env:3` `API_URL=/api`.
+Backend port is **not** in `backend/.env` — `backend/app/__main__.py:10` reads `$PORT` else `8000` (uvicorn default). Frontend port is `frontend/vite.config.ts:58` (`5173`) with `frontend/.env:3` `VITE_API_URL=/api`.
 
 If you saw `ASGI/SGI` or `Router.__init__() got unexpected keyword argument 'on_startup'` errors, it was from running `uvicorn app.main` (missing `:app`) or global `fastapi==0.115` instead of the venv's `0.141.1`. Always use `uv run` from `backend/`.
 

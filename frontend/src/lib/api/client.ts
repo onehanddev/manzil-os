@@ -1,6 +1,7 @@
 import { useAuthStore } from '@/stores/auth-store'
+import { getApiBase } from './base-url'
 
-const API_BASE = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
+const API_BASE = getApiBase()
 
 export class ApiError extends Error {
   status: number

@@ -13,6 +13,7 @@ import { NativeDateField } from '@/components/ui/native-date-field'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useMe } from '@/lib/api/hooks'
+import { getApiBase } from '@/lib/api/base-url'
 import { useAuthStore } from '@/stores/auth-store'
 
 type CashbookReport = {
@@ -218,7 +219,7 @@ export function ReportsPage() {
   async function downloadReport(format: 'xlsx' | 'pdf', range = { from, to }) {
     try {
       const token = useAuthStore.getState().accessToken
-      const base = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
+      const base = getApiBase()
       const response = await fetch(`${base}/reports/cashbook?from=${range.from}&to=${range.to}&format=${format}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })

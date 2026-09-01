@@ -48,7 +48,8 @@ if _db_url:
         cleaned = cleaned.replace("postgresql://", "postgresql+psycopg://", 1)
     elif cleaned.startswith("postgres://"):
         cleaned = cleaned.replace("postgres://", "postgresql+psycopg://", 1)
-    config.set_main_option("sqlalchemy.url", cleaned)
+    # ConfigParser interpolates % – escape it (%% -> % at read time, e.g. %40 in passwords)
+    config.set_main_option("sqlalchemy.url", cleaned.replace("%", "%%"))
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

@@ -33,7 +33,7 @@ The production login form uses mobile + password through the backend
 
 - **Demo mode:** the login screen offers "Continue in demo mode" for MSW mocks.
 - **Hosted Supabase:** backend env vars hold Supabase secrets; the frontend only
-  needs `API_URL` pointing at the deployed FastAPI API.
+  needs `VITE_API_URL` pointing at the deployed FastAPI API.
 
 To toggle offline mocks explicitly, set `VITE_MOCK_API=true/false` in `.env`.
 

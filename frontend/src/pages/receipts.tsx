@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { MobileSelect } from '@/components/ui/mobile-select'
 import { NativeDateField } from '@/components/ui/native-date-field'
 import { cn } from '@/lib/utils'
+import { getApiBase } from '@/lib/api/base-url'
 import { useOnlineStatus } from '@/lib/use-online-status'
 import { toast } from 'sonner'
 
@@ -48,7 +49,7 @@ type Receipt = {
   whatsapp_failure_reason?: string | null
 }
 
-const API_BASE = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
+const API_BASE = getApiBase()
 
 function receiptPdfHref(receipt: Receipt) {
   const href = receipt.public_pdf_url ?? `/api/receipts/${receipt.id}/pdf`

@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { getApiBase, getAuthBase } from '@/lib/api/base-url'
 
-const API_BASE = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
-const AUTH_BASE = API_BASE.replace(/\/api$/, '')
+const API_BASE = getApiBase()
+const AUTH_BASE = getAuthBase()
 
 type LoginResponse = {
   access_token: string

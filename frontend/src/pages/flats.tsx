@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, ApiError } from '@/lib/api/client'
+import { getApiBase } from '@/lib/api/base-url'
 import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -223,7 +224,7 @@ export function FlatsPage() {
   const handleDownloadExcel = async () => {
     try {
       const token = useAuthStore.getState().accessToken
-      const base = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
+      const base = getApiBase()
       const response = await fetch(`${base}/reports/flat-dues.xlsx`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
