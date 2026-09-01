@@ -223,7 +223,7 @@ export function FlatsPage() {
   const handleDownloadExcel = async () => {
     try {
       const token = useAuthStore.getState().accessToken
-      const base = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+      const base = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
       const response = await fetch(`${base}/reports/flat-dues.xlsx`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })

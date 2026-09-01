@@ -191,21 +191,71 @@ def test_society_and_flat_categories_seeded(conn):
         assert count >= 2, f"expected >=2 flat_categories seeded, got {count}"
 
 
-def test_admin_user_and_membership_seeded(conn):
-    """One admin user with SOCIETY_ADMIN membership must be seeded."""
+def test_migrations_do_not_seed_production_admin_credentials(conn):
+    """Alembic bootstrap must not create login users or known production credentials."""
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM users")
-        assert cur.fetchone()[0] >= 1
+        assert cur.fetchone()[0] == 0
         cur.execute("SELECT count(*) FROM society_memberships")
-        assert cur.fetchone()[0] >= 1
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT count(*) FROM membership_roles")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT count(*) FROM persons")
+        assert cur.fetchone()[0] == 0
+
+
+def test_user_mobile_is_unique_for_supabase_identity_mapping(conn):
+    """Supabase phone auth maps by mobile, so duplicate local users must be impossible."""
+    with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT count(*) FROM membership_roles mr
-            JOIN roles r ON r.id = mr.role_id
-            WHERE r.key = 'SOCIETY_ADMIN'
+            INSERT INTO users (id, mobile, display_name)
+            VALUES ('00000000-0000-0000-0000-000000009001', '+919111111111', 'First Admin')
             """
         )
-        assert cur.fetchone()[0] >= 1
+        with pytest.raises(errors.UniqueViolation):
+            cur.execute(
+                """
+                INSERT INTO users (id, mobile, display_name)
+                VALUES ('00000000-0000-0000-0000-000000009002', '+919111111111', 'Duplicate Admin')
+                """
+            )
+        cur.execute("DELETE FROM users WHERE id = '00000000-0000-0000-0000-000000009001'")
+
+
+def _ensure_receipt_test_membership(cur, society_id):
+    user_id = "00000000-0000-0000-0000-000000009101"
+    membership_id = "00000000-0000-0000-0000-000000009102"
+    cur.execute(
+        """
+        INSERT INTO users (id, mobile, display_name)
+        VALUES (%s, '+919111111101', 'Schema Test Collector')
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (user_id,),
+    )
+    cur.execute(
+        """
+        INSERT INTO society_memberships (id, user_id, society_id, status)
+        VALUES (%s, %s, %s, 'ACTIVE')
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (membership_id, user_id, society_id),
+    )
+    return membership_id
+
+
+def _ensure_receipt_test_person(cur, society_id):
+    person_id = "00000000-0000-0000-0000-000000009103"
+    cur.execute(
+        """
+        INSERT INTO persons (id, society_id, name, mobile)
+        VALUES (%s, %s, 'Schema Test Payer', '+919111111102')
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (person_id, society_id),
+    )
+    return person_id
 
 
 def test_opening_due_minus_receipts_produces_negative_advance(conn):
@@ -229,19 +279,8 @@ def test_opening_due_minus_receipts_produces_negative_advance(conn):
             "INSERT INTO opening_dues (flat_id, amount) VALUES (%s, %s) ON CONFLICT (flat_id) DO UPDATE SET amount=EXCLUDED.amount",
             (flat_id, 2000),
         )
-        # need a person and membership for receipt
-        cur.execute("SELECT id FROM persons LIMIT 1")
-        row = cur.fetchone()
-        if row:
-            person_id = row[0]
-        else:
-            cur.execute(
-                "INSERT INTO persons (society_id, name, mobile) VALUES (%s, %s, %s) RETURNING id",
-                (society_id, "Test Payer", "+919000000001"),
-            )
-            person_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM society_memberships LIMIT 1")
-        membership_id = cur.fetchone()[0]
+        person_id = _ensure_receipt_test_person(cur, society_id)
+        membership_id = _ensure_receipt_test_membership(cur, society_id)
         cur.execute(
             """
             INSERT INTO receipts (society_id, flat_id, payer_person_id, amount, business_date, type, collected_by)
@@ -279,10 +318,8 @@ def test_receipt_amount_rejects_zero_and_negative(conn):
             (society_id, "AMT-102", cat_id),
         )
         flat_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM persons LIMIT 1")
-        person_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM society_memberships LIMIT 1")
-        membership_id = cur.fetchone()[0]
+        person_id = _ensure_receipt_test_person(cur, society_id)
+        membership_id = _ensure_receipt_test_membership(cur, society_id)
         for bad_amount in [0, -100, -0.01]:
             with pytest.raises(errors.CheckViolation):
                 cur.execute(
@@ -392,10 +429,8 @@ def test_receipt_business_date_required(conn):
             (society_id, "BD-105", cat_id),
         )
         flat_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM persons LIMIT 1")
-        person_id = cur.fetchone()[0]
-        cur.execute("SELECT id FROM society_memberships LIMIT 1")
-        membership_id = cur.fetchone()[0]
+        person_id = _ensure_receipt_test_person(cur, society_id)
+        membership_id = _ensure_receipt_test_membership(cur, society_id)
         with pytest.raises(errors.NotNullViolation):
             cur.execute(
                 """

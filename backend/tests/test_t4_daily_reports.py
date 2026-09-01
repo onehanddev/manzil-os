@@ -121,3 +121,39 @@ def test_idle_day_skips_snapshot_and_delivery(conn):
         db.close()
 
     assert result == {"processed": 0, "skipped": 1}
+
+
+def test_daily_cashbook_job_rejects_missing_or_wrong_secret(monkeypatch):
+    """EventBridge calls the internal HTTP seam with X-Job-Secret."""
+    monkeypatch.setenv("JOB_SECRET", "correct-test-job-secret")
+    monkeypatch.setattr(
+        "app.daily_reports.router.run_daily_cashbook",
+        lambda *_args, **_kwargs: pytest.fail("daily job should not run without the shared secret"),
+        raising=False,
+    )
+    client = _client()
+
+    missing = client.post("/internal/jobs/daily-cashbook")
+    wrong = client.post("/internal/jobs/daily-cashbook", headers={"X-Job-Secret": "wrong-secret"})
+
+    assert missing.status_code == 401, missing.text
+    assert wrong.status_code == 401, wrong.text
+
+
+def test_daily_cashbook_job_runs_with_matching_secret(monkeypatch):
+    monkeypatch.setenv("JOB_SECRET", "correct-test-job-secret")
+    calls = []
+
+    def fake_run_daily_cashbook(db, *, business_date):
+        calls.append((db, business_date))
+        return {"processed": 2, "skipped": 1}
+
+    monkeypatch.setattr("app.daily_reports.router.run_daily_cashbook", fake_run_daily_cashbook, raising=False)
+    client = _client()
+
+    response = client.post("/internal/jobs/daily-cashbook", headers={"X-Job-Secret": "correct-test-job-secret"})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"processed": 2, "skipped": 1}
+    assert len(calls) == 1
+    assert isinstance(calls[0][1], date)

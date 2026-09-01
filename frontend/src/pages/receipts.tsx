@@ -48,7 +48,7 @@ type Receipt = {
   whatsapp_failure_reason?: string | null
 }
 
-const API_BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+const API_BASE = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
 
 function receiptPdfHref(receipt: Receipt) {
   const href = receipt.public_pdf_url ?? `/api/receipts/${receipt.id}/pdf`

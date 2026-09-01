@@ -12,7 +12,7 @@
     "test:watch": "vitest",
     "test:e2e": "cypress run",
     "test:e2e:mock": "VITE_MOCK_API=true cypress run --spec cypress/e2e/auth.cy.ts,cypress/e2e/master-data.cy.ts,cypress/e2e/test-harness.cy.ts",
-    "test:e2e:acceptance": "VITE_MOCK_API=false cypress run --spec cypress/e2e/supabase-otp.cy.ts",
+    "test:e2e:acceptance": "VITE_MOCK_API=false cypress run --spec cypress/e2e/password-auth.cy.ts",
     "test:pwa": "npm run build:pwa-test && node scripts/test-pwa-preview.mjs",
     "build:pwa-test": "VITE_MOCK_API=false npm run build",
     "cy:open": "cypress open",

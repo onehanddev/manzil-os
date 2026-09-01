@@ -1,12 +1,18 @@
-"""Admin push-subscription HTTP seam for daily reports."""
+"""HTTP seams for daily reports."""
 
+import secrets
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_active, require_admin
+from app.config import get_job_secret
 from app.daily_reports.push import vapid_public_key
+from app.daily_reports.scheduler import run_daily_cashbook
 from app.db import get_db
 from app.models import PushSubscription
 
@@ -25,6 +31,12 @@ class SubscribeRequest(BaseModel):
 
 class UnsubscribeRequest(BaseModel):
     endpoint: str
+
+
+def _require_job_secret(x_job_secret: str | None = Header(default=None, alias="X-Job-Secret")) -> None:
+    expected = get_job_secret()
+    if not expected or x_job_secret is None or not secrets.compare_digest(x_job_secret, expected):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid job secret")
 
 
 @router.get("/api/push/vapid_public_key")
@@ -66,3 +78,9 @@ def unsubscribe(payload: UnsubscribeRequest, db: Session = Depends(get_db), curr
     if subscription is not None:
         db.delete(subscription)
         db.commit()
+
+
+@router.post("/internal/jobs/daily-cashbook", dependencies=[Depends(_require_job_secret)])
+def run_daily_cashbook_job(db: Session = Depends(get_db)):
+    business_date = datetime.now(ZoneInfo("Asia/Kolkata")).date()
+    return run_daily_cashbook(db, business_date=business_date)

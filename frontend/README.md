@@ -12,8 +12,9 @@ under `/app`.
 - **Tailwind CSS v4 + shadcn/ui** components
 - **TanStack Query** (server state) + **Zustand** (client state)
 - **React Router v7** with auth guards
-- **Supabase** (`supabase-js`) for authentication only — all business data
-  flows through the FastAPI backend with the Supabase JWT as a bearer token
+- **Supabase Auth** behind the FastAPI backend — users sign in with registered
+  mobile + password; all business data flows through the backend with the
+  Supabase JWT as a bearer token
 - **MSW** (Mock Service Worker) for a mock API in local dev and tests
 - **PWA** via `vite-plugin-pwa` (installable, offline shell)
 - **Vitest + React Testing Library** for unit/component tests
@@ -23,21 +24,16 @@ under `/app`.
 
 ```bash
 npm install
-cp .env.example .env   # already points to local Supabase (http://127.0.0.1:54321)
+cp .env.example .env   # points to the local FastAPI backend
 npm run dev            # http://localhost:5173
 ```
 
-The repo ships with `frontend/.env` pointing to **local Supabase** (see
-`supabase/config.toml` [auth.sms.test_otp] — OTP is always `123456`, no Twilio
-needed). Run `npx supabase start` then `bash scripts/sync-supabase-env.sh` to
-sync keys into `.env`.
+The production login form uses mobile + password through the backend
+`/auth/login` endpoint. SMS OTP is not required for the current pilot.
 
-- **Demo mode:** if `VITE_SUPABASE_URL` is empty, the login screen offers
-  "Continue in demo mode" (MSW mocks, no backend).
-- **Local Supabase:** `VITE_SUPABASE_URL=http://127.0.0.1:54321` with the anon key
-  from `npx supabase status -o env`. Use any phone in the test_otp list, e.g.
-  `+919000000000` / `123456`.
-- **Hosted Supabase:** copy keys from the cloud dashboard into `.env` instead.
+- **Demo mode:** the login screen offers "Continue in demo mode" for MSW mocks.
+- **Hosted Supabase:** backend env vars hold Supabase secrets; the frontend only
+  needs `API_URL` pointing at the deployed FastAPI API.
 
 To toggle offline mocks explicitly, set `VITE_MOCK_API=true/false` in `.env`.
 

@@ -187,41 +187,9 @@ def upgrade() -> None:
             ('00000000-0000-0000-0000-000000000102', '00000000-0000-0000-0000-000000000001', '2 BHK', TRUE)
         ON CONFLICT (id) DO NOTHING
     """)
-    op.execute("""
-        INSERT INTO users (id, username, mobile, display_name)
-        VALUES (
-            '00000000-0000-0000-0000-000000000201',
-            'admin',
-            '+919000000000',
-            'Pilot Admin'
-        )
-        ON CONFLICT (id) DO NOTHING
-    """)
-    op.execute("""
-        INSERT INTO society_memberships (id, user_id, society_id, status)
-        VALUES (
-            '00000000-0000-0000-0000-000000000301',
-            '00000000-0000-0000-0000-000000000201',
-            '00000000-0000-0000-0000-000000000001',
-            'ACTIVE'
-        )
-        ON CONFLICT (id) DO NOTHING
-    """)
-    op.execute("""
-        INSERT INTO membership_roles (society_membership_id, role_id)
-        SELECT '00000000-0000-0000-0000-000000000301', id FROM roles WHERE key='SOCIETY_ADMIN'
-        ON CONFLICT DO NOTHING
-    """)
-    op.execute("""
-        INSERT INTO persons (id, society_id, name, mobile)
-        VALUES (
-            '00000000-0000-0000-0000-000000000401',
-            '00000000-0000-0000-0000-000000000001',
-            'Default Owner',
-            '+919000000009'
-        )
-        ON CONFLICT (id) DO NOTHING
-    """)
+    # Production migrations intentionally stop at reference/bootstrap data.
+    # Login users, memberships, and resident/contact records are created
+    # explicitly per environment after deploy.
 
 
 def downgrade() -> None:

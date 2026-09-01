@@ -7,13 +7,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-const API_BASE = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+const API_BASE = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
 const AUTH_BASE = API_BASE.replace(/\/api$/, '')
-const hasSupabaseEnv = Boolean(
-  import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY,
-)
 
-type OtpVerifyResponse = {
+type LoginResponse = {
   access_token: string
   token_type: string
   status: 'active' | 'pending'
@@ -58,53 +55,24 @@ export function LoginPage() {
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
-  const [step, setStep] = useState<'phone' | 'otp'>('phone')
   const [phone, setPhone] = useState('')
-  const [otp, setOtp] = useState('')
+  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  const demoMode = !hasSupabaseEnv
 
   if (accessToken) {
     return <Navigate to={from} replace />
   }
 
-  function enterDemo() {
-    setAuth({
-      accessToken: 'demo-token',
-      user: { id: 'user-dev', displayName: 'Dev User', mobile: phone || '+91 99999 99999' },
-    })
-    navigate(from, { replace: true })
-  }
 
-  async function handleSendOtp(e: FormEvent) {
+  async function handleSignIn(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (demoMode) {
-      enterDemo()
-      return
-    }
     setBusy(true)
     try {
-      await postJson(`${AUTH_BASE}/auth/otp/send`, { mobile: phone })
-      setStep('otp')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not send OTP')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function handleVerifyOtp(e: FormEvent) {
-    e.preventDefault()
-    setError(null)
-    if (demoMode) return
-    setBusy(true)
-    try {
-      const session = await postJson<OtpVerifyResponse>(`${AUTH_BASE}/auth/otp/verify`, {
+      const session = await postJson<LoginResponse>(`${AUTH_BASE}/auth/login`, {
         mobile: phone,
-        token: otp,
+        password,
       })
       const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
       setAuth({
@@ -117,7 +85,7 @@ export function LoginPage() {
       })
       navigate(from, { replace: true })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not verify OTP')
+      setError(err instanceof Error ? err.message : 'Could not sign in')
     } finally {
       setBusy(false)
     }
@@ -132,78 +100,42 @@ export function LoginPage() {
           </div>
           <CardTitle className="text-xl">Manzil OS</CardTitle>
           <CardDescription>
-            Sign in with your registered mobile number
+            Sign in with your registered mobile number and password
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {step === 'phone' ? (
-            <form onSubmit={handleSendOtp} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="phone">Mobile number</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder="+91 98xxx xxxxx"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" disabled={busy}>
-                {busy && <Loader2 className="animate-spin" />}
-                {demoMode ? 'Continue' : 'Send OTP'}
-              </Button>
-              <div className="space-y-2">
-                {demoMode && (
-                  <p className="text-center text-xs text-muted-foreground">
-                    Supabase is not configured — demo mode lets you explore the
-                    app shell without a backend.
-                  </p>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={enterDemo}
-                >
-                  Continue in demo mode
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <form onSubmit={handleVerifyOtp} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="otp">OTP sent to {phone}</Label>
-                <Input
-                  id="otp"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  placeholder="6-digit code"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" className="w-full" disabled={busy}>
-                {busy && <Loader2 className="animate-spin" />}
-                Verify
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full"
-                onClick={() => setStep('phone')}
-                disabled={busy}
-              >
-                Change number
-              </Button>
-            </form>
-          )}
+          <form onSubmit={handleSignIn} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="phone">Mobile number</Label>
+              <Input
+                id="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                placeholder="+91 98xxx xxxxx"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy && <Loader2 className="animate-spin" />}
+              Sign in
+            </Button>
+            
+          </form>
         </CardContent>
       </Card>
     </div>

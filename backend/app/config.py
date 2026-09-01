@@ -68,6 +68,11 @@ def get_database_url() -> str:
     return _normalize(url)
 
 
+def get_job_secret() -> str:
+    """Return the shared secret required by protected job endpoints."""
+    return (os.environ.get("JOB_SECRET") or "").strip()
+
+
 # Convenience re-export for code that previously did `from config import engine`
 # – they can now do `from app.config import get_database_url`.
-__all__ = ["get_database_url"]
+__all__ = ["get_database_url", "get_job_secret"]

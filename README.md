@@ -86,7 +86,7 @@ curl http://127.0.0.1:8000/health
 
 # frontend (from frontend/)
 npm install
-cp .env.example .env          # already VITE_API_URL=http://localhost:8000/api, SUPABASE_URL=http://127.0.0.1:54321
+cp .env.example .env          # already API_URL=http://localhost:8000/api, SUPABASE_URL=http://127.0.0.1:54321
 npm run dev                   # Vite on http://localhost:5173
 npm run build && npm run typecheck
 npm test                      # Vitest + RTL + MSW

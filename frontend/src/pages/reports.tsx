@@ -218,7 +218,7 @@ export function ReportsPage() {
   async function downloadReport(format: 'xlsx' | 'pdf', range = { from, to }) {
     try {
       const token = useAuthStore.getState().accessToken
-      const base = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+      const base = (import.meta.env.API_URL ?? '/api').replace(/\/$/, '')
       const response = await fetch(`${base}/reports/cashbook?from=${range.from}&to=${range.to}&format=${format}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })

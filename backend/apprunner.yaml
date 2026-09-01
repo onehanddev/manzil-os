@@ -1,0 +1,10 @@
+version: 1.0
+runtime: python312
+build:
+  commands:
+    build:
+      - pip install uv && uv sync --frozen
+run:
+  command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+  network:
+    port: 8000
