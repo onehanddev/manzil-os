@@ -101,7 +101,7 @@ export function DashboardPage() {
       </div>
 
       {isLoadingReport ? (
-        <div className="space-y-4" aria-label="Loading home">
+        <div className="space-y-4" role="status" aria-label="Loading home">
           <Skeleton className="h-36 w-full rounded-2xl" />
           <div className="grid grid-cols-2 gap-3">
             <Skeleton className="h-20 w-full rounded-xl" />
@@ -112,7 +112,7 @@ export function DashboardPage() {
       ) : null}
 
       {isError ? (
-        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-foreground">
           <span>Cash summary could not be loaded. Check connection and try again.</span>
           <Button variant="outline" size="sm" className="shrink-0 min-h-11" onClick={() => reportQuery.refetch()}>
             Try again

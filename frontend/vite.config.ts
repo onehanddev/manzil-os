@@ -18,13 +18,17 @@ export default defineConfig({
       filename: 'service-worker.ts',
       registerType: 'autoUpdate',
       includeAssets: ['icons/*.png'],
+      injectManifest: {
+        globIgnores: ['**/browser-*.js'],
+      },
       manifest: {
         name: 'Manzil OS',
         short_name: 'Manzil',
-        description: 'Society management app',
+        description: 'Daily cashbook and maintenance collection for residential societies',
         theme_color: '#18181b',
         background_color: '#ffffff',
         display: 'standalone',
+        orientation: 'portrait-primary',
         start_url: '/',
         scope: '/',
         icons: [

@@ -1,16 +1,18 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
-import { RequireAuth } from './guards'
-import { AppShell } from './layouts/app-shell'
 import { LoginPage } from '@/pages/login'
-import { DashboardPage } from '@/pages/dashboard'
-import { ReceiptsPage } from '@/pages/receipts'
-import { ExpensesPage } from '@/pages/expenses'
-import { FlatsPage } from '@/pages/flats'
-import { ExpenseCategoriesPage, FundsPage, VendorsPage } from '@/pages/funds'
-import { PeoplePage } from '@/pages/people'
-import { FlatCategoriesPage } from '@/pages/flat-categories'
-import { ReportsPage } from '@/pages/reports'
-import { NotFoundPage } from '@/pages/not-found'
+
+const protectedShellRoute = async () => ({ Component: (await import('./layouts/protected-app-shell')).ProtectedAppShell })
+const dashboardRoute = async () => ({ Component: (await import('@/pages/dashboard')).DashboardPage })
+const receiptsRoute = async () => ({ Component: (await import('@/pages/receipts')).ReceiptsPage })
+const expensesRoute = async () => ({ Component: (await import('@/pages/expenses')).ExpensesPage })
+const flatsRoute = async () => ({ Component: (await import('@/pages/flats')).FlatsPage })
+const fundsRoute = async () => ({ Component: (await import('@/pages/funds')).FundsPage })
+const vendorsRoute = async () => ({ Component: (await import('@/pages/funds')).VendorsPage })
+const expenseCategoriesRoute = async () => ({ Component: (await import('@/pages/funds')).ExpenseCategoriesPage })
+const peopleRoute = async () => ({ Component: (await import('@/pages/people')).PeoplePage })
+const flatCategoriesRoute = async () => ({ Component: (await import('@/pages/flat-categories')).FlatCategoriesPage })
+const reportsRoute = async () => ({ Component: (await import('@/pages/reports')).ReportsPage })
+const notFoundRoute = async () => ({ Component: (await import('@/pages/not-found')).NotFoundPage })
 
 /**
  * Phase 0 routes — pilot cashbook only.
@@ -25,24 +27,20 @@ export const router = createBrowserRouter(
   [
     { path: '/login', element: <LoginPage /> },
     {
-      element: (
-        <RequireAuth>
-          <AppShell />
-        </RequireAuth>
-      ),
+      lazy: protectedShellRoute,
       children: [
         { index: true, element: <Navigate to="/dashboard" replace /> },
-        { path: 'dashboard', element: <DashboardPage /> },
-        { path: 'receipts', element: <ReceiptsPage /> },
-        { path: 'expenses', element: <ExpensesPage /> },
-        { path: 'flats', element: <FlatsPage /> },
-        { path: 'people', element: <PeoplePage /> },
-        { path: 'flat-categories', element: <FlatCategoriesPage /> },
-        { path: 'funds', element: <FundsPage /> },
-        { path: 'vendors', element: <VendorsPage /> },
-        { path: 'expense-categories', element: <ExpenseCategoriesPage /> },
-        { path: 'reports', element: <ReportsPage /> },
-        { path: '*', element: <NotFoundPage /> },
+        { path: 'dashboard', lazy: dashboardRoute },
+        { path: 'receipts', lazy: receiptsRoute },
+        { path: 'expenses', lazy: expensesRoute },
+        { path: 'flats', lazy: flatsRoute },
+        { path: 'people', lazy: peopleRoute },
+        { path: 'flat-categories', lazy: flatCategoriesRoute },
+        { path: 'funds', lazy: fundsRoute },
+        { path: 'vendors', lazy: vendorsRoute },
+        { path: 'expense-categories', lazy: expenseCategoriesRoute },
+        { path: 'reports', lazy: reportsRoute },
+        { path: '*', lazy: notFoundRoute },
       ],
     },
   ],

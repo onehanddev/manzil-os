@@ -280,7 +280,7 @@ export function FlatsPage() {
       </div>
 
       {flatsQuery.isLoading ? (
-        <div aria-label="Loading flats" className="space-y-3">
+        <div role="status" aria-label="Loading flats" className="space-y-3">
           {[0, 1, 2].map((item) => <Skeleton key={item} className="h-20 w-full rounded-xl" />)}
         </div>
       ) : flatsQuery.isError ? (
@@ -530,7 +530,7 @@ function FlatDetailSheet({
                 </Button>
               </div>
               {ledgerLoading ? (
-                <div className="space-y-2" aria-label="Loading ledger">
+                <div className="space-y-2" role="status" aria-label="Loading ledger">
                   <Skeleton className="h-16 rounded-xl" />
                   <Skeleton className="h-16 rounded-xl" />
                 </div>

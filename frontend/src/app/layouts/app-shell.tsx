@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   BarChart3,
@@ -136,7 +136,7 @@ export function AppShell() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background print:h-auto print:overflow-visible">
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pt-[env(safe-area-inset-top)] print:hidden">
-        <div className="flex h-14 items-center gap-2 px-4">
+        <div className="flex h-14 items-center gap-2 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
           <NavLink to="/dashboard" className="mr-1 font-semibold tracking-tight">
             Manzil OS
           </NavLink>
@@ -160,7 +160,7 @@ export function AppShell() {
           </nav>
         </aside>
 
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 pb-28 md:px-8 md:pb-8 print:overflow-visible print:p-0">
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] py-6 pb-28 md:px-8 md:pb-8 print:overflow-visible print:p-0">
           <Outlet />
         </main>
       </div>
@@ -238,7 +238,7 @@ function MobileNav({ items, moreItems, onLogout }: { items: NavItem[]; moreItems
   const cols = items.length + 1
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pb-[env(safe-area-inset-bottom)] md:hidden print:hidden" aria-label="Primary">
-      <div className="grid h-16" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      <div className="grid h-16 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
         {items.map((item) => (
           <MobileLink key={item.to} item={item} />
         ))}
@@ -268,14 +268,22 @@ function MobileLink({ item }: { item: NavItem }) {
 
 function MoreSheet({ items, onLogout }: { items: NavItem[]; onLogout: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const location = useLocation()
   const societyItems = items.filter((item) => item.group === 'society')
   const financialItems = items.filter((item) => item.group === 'financial')
   const isActive = items.some((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`))
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    <Sheet
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) requestAnimationFrame(() => triggerRef.current?.focus())
+      }}
+    >
       <SheetTrigger
+        ref={triggerRef}
         aria-current={isActive ? 'page' : undefined}
         className={cn(
           'relative flex flex-col items-center justify-center gap-1 text-[11px] font-medium',

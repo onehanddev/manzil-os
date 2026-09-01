@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
-import { screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@/test/utils'
 import { server } from '@/test/server'
 import { ReceiptsPage } from './receipts'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
   it('prefills amount with flat category default when flat is selected, leaves empty if no default', async () => {
@@ -61,6 +65,26 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
     await user.clear(amountInput)
     await user.type(amountInput, '2000')
     expect(amountInput).toHaveValue('2000')
+  })
+
+  it('announces lost connectivity and blocks recording until the device is online', async () => {
+    let isOnline = true
+    vi.stubGlobal('navigator', { ...navigator, get onLine() { return isOnline } })
+    renderWithProviders(<ReceiptsPage />)
+
+    isOnline = false
+    act(() => window.dispatchEvent(new Event('offline')))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'You’re offline. Financial entries can’t be recorded.',
+    )
+    expect(screen.getByRole('button', { name: /Record receipt/i })).toBeDisabled()
+
+    isOnline = true
+    act(() => window.dispatchEvent(new Event('online')))
+
+    await waitFor(() => expect(screen.queryByText(/You’re offline/i)).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Record receipt/i })).toBeEnabled()
   })
 
   it('shows official receipt number, PDF action, WhatsApp status, and resend action', async () => {

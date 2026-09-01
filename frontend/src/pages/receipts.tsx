@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { MobileSelect } from '@/components/ui/mobile-select'
 import { NativeDateField } from '@/components/ui/native-date-field'
 import { cn } from '@/lib/utils'
+import { useOnlineStatus } from '@/lib/use-online-status'
 import { toast } from 'sonner'
 
 type Flat = {
@@ -95,6 +96,7 @@ function StatusBadge({ status }: { status: string }) {
 
 export function ReceiptsPage() {
   const qc = useQueryClient()
+  const isOnline = useOnlineStatus()
   const { data: flatData } = useQuery({
     queryKey: ['flats'],
     queryFn: () => api.get<{ flats: Flat[] }>('/flats'),
@@ -276,6 +278,11 @@ export function ReceiptsPage() {
           <CardTitle className="text-sm">Record maintenance receipt</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!isOnline && (
+            <div role="status" className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-warning">
+              You’re offline. Financial entries can’t be recorded.
+            </div>
+          )}
           <div className="space-y-1">
             <Label>Flat</Label>
             <MobileSelect
@@ -358,8 +365,9 @@ export function ReceiptsPage() {
 
           <Button
             className="w-full h-11"
-            disabled={createReceipt.isPending}
+            disabled={!isOnline || createReceipt.isPending}
             onClick={() => {
+              if (!isOnline) return
               if (!selectedFlatId) {
                 toast.error('Select a flat')
                 return

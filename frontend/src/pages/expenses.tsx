@@ -12,6 +12,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { useOnlineStatus } from '@/lib/use-online-status'
 
 type Fund = { id: string; name: string; is_active: boolean }
 type ExpenseCategory = { id: string; name: string; is_active: boolean }
@@ -94,7 +95,7 @@ export function ExpensesPage() {
   const [createdExpense, setCreatedExpense] = useState<Expense | null>(null)
   const [createdVendorName, setCreatedVendorName] = useState('')
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null)
-  const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
+  const isOnline = useOnlineStatus()
 
   const [filterSheetOpen, setFilterSheetOpen] = useState(false)
   const [filterFrom, setFilterFrom] = useState('')
@@ -119,17 +120,6 @@ export function ExpensesPage() {
   useEffect(() => {
     if (!categoryId && categories.length) setCategoryId(categories[0].id)
   }, [categories, categoryId])
-
-  useEffect(() => {
-    const markOnline = () => setIsOnline(true)
-    const markOffline = () => setIsOnline(false)
-    window.addEventListener('online', markOnline)
-    window.addEventListener('offline', markOffline)
-    return () => {
-      window.removeEventListener('online', markOnline)
-      window.removeEventListener('offline', markOffline)
-    }
-  }, [])
 
   const expensesQuery = useQuery({
     queryKey: ['expenses', appliedFilters],
@@ -433,7 +423,7 @@ export function ExpensesPage() {
             </div>
 
             {expensesQuery.isLoading ? (
-              <div aria-label="Loading expenses" className="space-y-2">
+              <div role="status" aria-label="Loading expenses" className="space-y-2">
                 {[0, 1, 2].map((item) => <Skeleton key={item} className="h-20 w-full rounded-xl" />)}
               </div>
             ) : expensesQuery.isError ? (

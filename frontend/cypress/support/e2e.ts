@@ -1,4 +1,5 @@
 import './commands'
+import 'cypress-axe'
 
 Cypress.on('window:load', (win) => {
   const style = win.document.createElement('style')

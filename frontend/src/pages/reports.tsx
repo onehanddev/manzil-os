@@ -462,7 +462,7 @@ export function ReportsPage() {
 
       <div className={tab === 'history' ? 'hidden' : 'flex-1 space-y-4 overflow-y-auto overscroll-contain pb-28 md:overflow-visible md:pb-0 print:overflow-visible print:pb-0'}>
       {reportQuery.isLoading && (
-        <div className="space-y-4" aria-label="Loading cashbook report">
+        <div className="space-y-4" role="status" aria-label="Loading cashbook report">
           <Skeleton className="h-48 rounded-xl" />
           <Skeleton className="h-64 rounded-xl" />
         </div>

@@ -136,7 +136,7 @@ export function FlatCategoriesPage() {
       </div>
 
       {categoriesQuery.isLoading ? (
-        <div className="space-y-3" aria-label="Loading flat categories">
+        <div className="space-y-3" role="status" aria-label="Loading flat categories">
           {[0, 1, 2].map((item) => <Skeleton key={item} className="h-16 rounded-xl" />)}
         </div>
       ) : categoriesQuery.isError ? (
