@@ -5,12 +5,14 @@ Seam: HTTP API via TestClient with Supabase JWT.
 
 import uuid
 from contextlib import contextmanager
+from io import BytesIO
+import urllib.error
 
 import psycopg
 
 from conftest import TEST_DB_URL
-from tests.test_issue5_receipts import _fund, _setup_flat_with_occupants, _supabase_env_and_mock  # noqa: F401
-from tests.test_master_data import _admin_token, _auth_header, _client
+from tests.test_issue5_receipts import _fund, _setup_flat_with_occupants
+from tests.test_master_data import _admin_token, _auth_header, _client, _supabase_env_and_mock  # noqa: F401
 
 
 def _create_numbered_receipt(client, token, *, business_date: str, amount: int = 1000):
@@ -194,3 +196,40 @@ def test_live_whatsapp_mode_sends_receipt_to_payer_mobile_without_test_override(
     assert response.status_code == 201, response.text
     assert response.json()["whatsapp_status"] == "SENT"
     assert b'"to": "919876543210"' in sent_requests[0][0].data
+
+
+def test_live_whatsapp_failure_logs_meta_error_body(conn, monkeypatch, _supabase_env_and_mock):
+    client = _client()
+    token = _admin_token(client)
+
+    monkeypatch.setenv("PROVIDER_MODE", "live")
+    monkeypatch.setenv("WHATSAPP_TOKEN", "test-meta-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_ID", "1234567890")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "maintenance_receipt")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_LANG", "en_US")
+    monkeypatch.setenv("WHATSAPP_TEST_TO", "919876543210")
+
+    def _mock_urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            hdrs=None,
+            fp=BytesIO(
+                b'{"error":{"message":"Template name does not exist in the translation",'
+                b'"type":"OAuthException","code":132001,"fbtrace_id":"TRACE123"}}'
+            ),
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
+
+    receipt = _create_numbered_receipt(client, token, business_date="2027-06-08", amount=2100)
+
+    assert receipt["whatsapp_status"] == "FAILED"
+    assert "Template name does not exist" in receipt["whatsapp_failure_reason"]
+    assert "TRACE123" in receipt["whatsapp_failure_reason"]
+
+    notifications = client.get("/api/notifications", headers=_auth_header(token))
+    matching = [n for n in notifications.json()["notifications"] if n["receipt_id"] == receipt["id"]]
+    assert matching[-1]["status"] == "FAILED"
+    assert "Template name does not exist" in matching[-1]["failure_reason"]

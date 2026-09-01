@@ -154,7 +154,12 @@ class LiveWhatsAppProvider(NotificationProvider):
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = json.loads(response.read().decode("utf-8") or "{}")
                 provider_message_id = (data.get("messages") or [{}])[0].get("id")
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as error:
+        except urllib.error.HTTPError as error:
+            status = "FAILED"
+            response_body = error.read().decode("utf-8", errors="replace")
+            failure_reason = f"HTTP {error.code}: {response_body}" if response_body else str(error)
+            msg = f"{msg} failed: {failure_reason}"
+        except (urllib.error.URLError, TimeoutError, ValueError) as error:
             status = "FAILED"
             failure_reason = str(error)
             msg = f"{msg} failed: {failure_reason}"
