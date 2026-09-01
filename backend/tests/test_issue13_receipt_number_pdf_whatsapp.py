@@ -4,6 +4,7 @@ Seam: HTTP API via TestClient with Supabase JWT.
 """
 
 import uuid
+from contextlib import contextmanager
 
 import psycopg
 
@@ -107,3 +108,89 @@ def test_receipt_exposes_whatsapp_status_and_resend_logs_again_in_test_mode(conn
     notifications = client.get("/api/notifications", headers=_auth_header(token))
     matching = [n for n in notifications.json()["notifications"] if n["receipt_id"] == receipt["id"]]
     assert len(matching) == 2
+
+
+def test_live_whatsapp_mode_sends_receipt_to_configured_test_number(conn, monkeypatch):
+    client = _client()
+    token = _admin_token(client)
+    sent_requests = []
+
+    monkeypatch.setenv("PROVIDER_MODE", "live")
+    monkeypatch.setenv("WHATSAPP_TOKEN", "test-meta-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_ID", "1234567890")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "maintenance_receipt")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_LANG", "en_US")
+    monkeypatch.setenv("WHATSAPP_TEST_TO", "919876543210")
+
+    class _Response:
+        def read(self):
+            return b'{"messages":[{"id":"wamid.TEST_RECEIPT"}]}'
+
+    @contextmanager
+    def _mock_urlopen(request, timeout):
+        sent_requests.append((request, timeout))
+        yield _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
+
+    receipt = _create_numbered_receipt(client, token, business_date="2027-06-06", amount=1800)
+
+    assert receipt["whatsapp_status"] == "SENT"
+    assert len(sent_requests) == 1
+    request, timeout = sent_requests[0]
+    assert request.full_url == "https://graph.facebook.com/v20.0/1234567890/messages"
+    assert timeout == 10
+    assert request.headers["Authorization"] == "Bearer test-meta-token"
+    assert b'"to": "919876543210"' in request.data
+    assert b'"name": "maintenance_receipt"' in request.data
+
+    notifications = client.get("/api/notifications", headers=_auth_header(token))
+    matching = [n for n in notifications.json()["notifications"] if n["receipt_id"] == receipt["id"]]
+    assert matching[-1]["provider_mode"] == "live"
+    assert matching[-1]["provider_message_id"] == "wamid.TEST_RECEIPT"
+
+
+def test_live_whatsapp_mode_sends_receipt_to_payer_mobile_without_test_override(conn, monkeypatch):
+    client = _client()
+    token = _admin_token(client)
+    sent_requests = []
+
+    monkeypatch.setenv("PROVIDER_MODE", "live")
+    monkeypatch.setenv("WHATSAPP_TOKEN", "test-meta-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_ID", "1234567890")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "maintenance_receipt")
+    monkeypatch.delenv("WHATSAPP_TEST_TO", raising=False)
+
+    class _Response:
+        def read(self):
+            return b'{"messages":[{"id":"wamid.PAYER_RECEIPT"}]}'
+
+    @contextmanager
+    def _mock_urlopen(request, timeout):
+        sent_requests.append((request, timeout))
+        yield _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
+
+    fund_id = _fund(client, token)
+    flat_id, owner_id, _, _ = _setup_flat_with_occupants(client, token)
+    with psycopg.connect(TEST_DB_URL, autocommit=True) as db:
+        with db.cursor() as cur:
+            cur.execute("UPDATE persons SET mobile=%s WHERE id=%s", ("+91 98765 43210", owner_id))
+
+    response = client.post(
+        "/api/receipts",
+        headers=_auth_header(token),
+        json={
+            "flat_id": flat_id,
+            "amount": 1900,
+            "business_date": "2027-06-07",
+            "fund_id": fund_id,
+            "payer_person_id": owner_id,
+            "narration": f"ISS13-{uuid.uuid4().hex[:6]}",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["whatsapp_status"] == "SENT"
+    assert b'"to": "919876543210"' in sent_requests[0][0].data

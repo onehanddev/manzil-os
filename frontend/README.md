@@ -2,6 +2,10 @@
 
 Mobile-first PWA for society management (React + TypeScript + Vite).
 
+In production this PWA is deployed at `https://app.manzilos.com` as its own
+origin. The Next.js landing site links to this hostname; it is not mounted
+under `/app`.
+
 ## Stack
 
 - **React 19 + TypeScript + Vite**

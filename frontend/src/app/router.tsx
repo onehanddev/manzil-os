@@ -19,10 +19,6 @@ const notFoundRoute = async () => ({ Component: (await import('@/pages/not-found
  * Deferred (Phase 1): /billing, /members, /societies, /settings
  * See PHASE_0_PRD.md "Out of Scope".
  */
-// When served via manzilos.vercel.app/app (proxied by web), the PWA lives under /app.
-// Detect at runtime so the same build works both at manzilos-app.vercel.app/ and /app/*
-const basename = typeof window !== 'undefined' && window.location.pathname.startsWith('/app') ? '/app' : '/'
-
 export const router = createBrowserRouter(
   [
     { path: '/login', element: <LoginPage /> },
@@ -44,5 +40,5 @@ export const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: basename === '/' ? undefined : basename },
+  { basename: '/' },
 )

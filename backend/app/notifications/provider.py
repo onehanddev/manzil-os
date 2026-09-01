@@ -9,9 +9,10 @@ Also ReceiptRenderer stub: HTML in test, PDF later.
 
 from __future__ import annotations
 
-import os
-import uuid
 import json
+import os
+import re
+import uuid
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -38,6 +39,7 @@ class NotificationProvider(ABC):
         receipt_number: str | None = None,
         flat_number: str | None = None,
         society_name: str | None = None,
+        payer_mobile: str | None = None,
         pdf_url: str | None = None,
     ) -> Notification:
         ...
@@ -60,6 +62,7 @@ class TestNotificationProvider(NotificationProvider):
         receipt_number: str | None = None,
         flat_number: str | None = None,
         society_name: str | None = None,
+        payer_mobile: str | None = None,
         pdf_url: str | None = None,
     ) -> Notification:
         msg = f"[test] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount} narration={narration or ''} pdf={pdf_url or ''}"
@@ -85,6 +88,9 @@ class TestNotificationProvider(NotificationProvider):
 class LiveWhatsAppProvider(NotificationProvider):
     """Meta WhatsApp Cloud API sender for receipt utility templates."""
 
+    def _meta_phone_number(self, value: str | None) -> str:
+        return re.sub(r"\D", "", value or "")
+
     def send_receipt_notification(
         self,
         *,
@@ -99,13 +105,16 @@ class LiveWhatsAppProvider(NotificationProvider):
         receipt_number: str | None = None,
         flat_number: str | None = None,
         society_name: str | None = None,
+        payer_mobile: str | None = None,
         pdf_url: str | None = None,
     ) -> Notification:
         token = os.environ["WHATSAPP_TOKEN"]
         phone_id = os.environ["WHATSAPP_PHONE_ID"]
         template_name = os.environ["WHATSAPP_TEMPLATE_NAME"]
         template_lang = os.environ.get("WHATSAPP_TEMPLATE_LANG", "en_US")
-        to_number = os.environ.get("WHATSAPP_TEST_TO", "")
+        to_number = self._meta_phone_number(
+            os.environ.get("WHATSAPP_TEST_TO") or payer_mobile
+        )
         msg = f"[live] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount}"
         status = "SENT"
         provider_message_id = None

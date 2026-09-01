@@ -5,7 +5,7 @@ Mobile-first PWA + FastAPI + PostgreSQL for society cashbook (opening cash → m
 ## Stack
 
 - **Backend:** FastAPI + SQLAlchemy + Alembic + PostgreSQL + Supabase Auth (JWT). Notification provider toggle (`PROVIDER_MODE=test|live`).
-- **Frontend:** React 19 + Vite + Tailwind 4 + TanStack Query + Zustand + React Router + Supabase-js (auth only). PWA installable, 360px/390px checked.
+- **Frontend:** React 19 + Vite + Tailwind 4 + TanStack Query + Zustand + React Router + Supabase-js (auth only). PWA installable, 360px/390px checked. The PWA is served at `https://app.manzilos.com`; the marketing site is on the root domain.
 - **Seed:** deterministic fixtures (`backend/app/seed.py` + `backend/seed.sql`), idempotent.
 
 ## Quick start (local demo without real WhatsApp/OTP)
@@ -35,7 +35,9 @@ bash scripts/sync-supabase-env.sh   # syncs SUPABASE_* into backend/.env + front
 `.env` keys (see `backend/.env.example`):
 - `DATABASE_URL` – primary DB
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` – from `npx supabase status -o env` (or hosted dashboard)
-- `PROVIDER_MODE=test|live` – **test** logs receipts to `notifications` + stdout; **live** is a stub (no demo blocking)
+- `PROVIDER_MODE=test|live` – **test** logs receipts to `notifications` + stdout; **live** calls Meta WhatsApp Cloud API
+- `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_TEMPLATE_NAME`, `WHATSAPP_TEMPLATE_LANG` – Meta Cloud API sending config for live mode
+- `WHATSAPP_TEST_TO` – optional setup safety override; send all receipt WhatsApps to your Meta test recipient before using payer mobiles
 - `WHATSAPP_VERIFY_TOKEN` – webhook verification only
 
 ### 2. Seed demo fixture (repeatable, idempotent)
@@ -105,6 +107,22 @@ All Phase 1 paths have explicit empty/loading/error/success states (skeleton, mu
 - `PROVIDER_MODE=test` (default) – receipts create a `notifications` row (`provider_mode=test, status=LOGGED`) and print to stdout, no WhatsApp call.
 - `npx supabase start` + `test_otp: 123456` – OTP flow never touches Twilio.
 - Seed is deterministic – rerun is safe; `psql -f backend/seed.sql` is equivalent to `uv run python -m app.seed`.
+
+### Try real WhatsApp receipt delivery
+
+Use your Meta business test number first so live receipts do not go to residents while setup is being verified.
+
+```bash
+# backend/.env
+PROVIDER_MODE="live"
+WHATSAPP_TOKEN="<Meta access token>"
+WHATSAPP_PHONE_ID="<Meta phone number ID>"
+WHATSAPP_TEMPLATE_NAME="maintenance_receipt"
+WHATSAPP_TEMPLATE_LANG="en_US"
+WHATSAPP_TEST_TO="91XXXXXXXXXX"
+```
+
+Restart `uv run dev`, record a receipt, then check `/api/notifications`: a successful send stores `provider_mode=live`, `status=SENT`, and Meta's `provider_message_id`. Remove `WHATSAPP_TEST_TO` only after the template is approved and payer mobile numbers include country code.
 
 ## Tests
 
