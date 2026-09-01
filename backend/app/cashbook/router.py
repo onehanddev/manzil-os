@@ -266,6 +266,16 @@ def _send_receipt_whatsapp(db: Session, receipt: Receipt, society_id: uuid.UUID)
 
     society = db.execute(select(Society).where(Society.id == society_id)).scalar_one_or_none()
     flat = db.execute(select(Flat).where(Flat.id == receipt.flat_id, Flat.society_id == society_id)).scalar_one_or_none()
+    payer = (
+        db.execute(
+            select(Person).where(
+                Person.id == receipt.payer_person_id,
+                Person.society_id == society_id,
+            )
+        ).scalar_one_or_none()
+        if receipt.payer_person_id
+        else None
+    )
     return get_notification_provider().send_receipt_notification(
         db=db,
         society_id=society_id,
@@ -278,6 +288,7 @@ def _send_receipt_whatsapp(db: Session, receipt: Receipt, society_id: uuid.UUID)
         receipt_number=receipt.receipt_number,
         flat_number=flat.flat_number if flat else None,
         society_name=society.name if society else None,
+        payer_mobile=payer.mobile if payer else None,
         pdf_url=_receipt_public_pdf_url(receipt),
     )
 

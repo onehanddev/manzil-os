@@ -1,7 +1,5 @@
-// Same-domain routing: landing at / , PWA at /app (proxied to frontend deployment via next.config rewrites)
-// NEXT_PUBLIC_APP_URL can still override for local dev (e.g. http://localhost:5173)
-const _base = process.env.NEXT_PUBLIC_APP_URL?.trim();
-const APP_URL = _base ? `${_base.replace(/\/$/, "")}${_base.endsWith("/app") ? "" : "/app"}` : "/app";
+// The PWA is deployed separately at app.manzilos.com (or the local Vite origin).
+const APP_URL = process.env.NEXT_APP_URL?.trim() || "http://localhost:5173";
 
 export default function Page() {
   return (
