@@ -174,90 +174,98 @@ class LiveWhatsAppProvider(NotificationProvider):
         phone_id = _get_env("WHATSAPP_PHONE_ID")
         template_name = _get_env("WHATSAPP_TEMPLATE_NAME")
         template_lang = _get_env("WHATSAPP_TEMPLATE_LANG", "en_US")
-        to_number = self._meta_phone_number(
-            _get_env("WHATSAPP_TEST_TO") or payer_mobile
-        )
+        # Production routing: send to flat's linked payer (owner/tenant) if present,
+        # otherwise fall back to the env fallback number. WHATSAPP_TEST_TO is now
+        # a fallback, not an override — keeps receipt delivery live.
+        fallback_to = _get_env("WHATSAPP_FALLBACK_TO") or _get_env("WHATSAPP_TEST_TO")
+        to_number = self._meta_phone_number(payer_mobile or fallback_to)
         msg = f"[live] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount}"
         status = "SENT"
         provider_message_id = None
         failure_reason = None
-        abs_pdf_url = _absolute_pdf_url(pdf_url) if pdf_url else None
-        components: list[dict] = []
-        if abs_pdf_url:
-            filename = f"{(receipt_number or str(receipt_id)).replace('/', '-')}.pdf"
+        if not to_number:
+            status = "FAILED"
+            failure_reason = "No recipient mobile: flat has no linked owner/tenant and WHATSAPP_FALLBACK_TO/WHATSAPP_TEST_TO not set"
+            msg = f"{msg} failed: {failure_reason}"
+            print(f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} to=<missing> reason={failure_reason}")
+        else:
+            abs_pdf_url = _absolute_pdf_url(pdf_url) if pdf_url else None
+            components: list[dict] = []
+            if abs_pdf_url:
+                filename = f"{(receipt_number or str(receipt_id)).replace('/', '-')}.pdf"
+                components.append(
+                    {
+                        "type": "header",
+                        "parameters": [
+                            {
+                                "type": "document",
+                                "document": {"link": abs_pdf_url, "filename": filename},
+                            }
+                        ],
+                    }
+                )
             components.append(
                 {
-                    "type": "header",
+                    "type": "body",
                     "parameters": [
-                        {
-                            "type": "document",
-                            "document": {"link": abs_pdf_url, "filename": filename},
-                        }
+                        {"type": "text", "text": receipt_number or str(receipt_id)},
+                        {"type": "text", "text": flat_number or str(flat_id)},
+                        {"type": "text", "text": f"Rs. {amount:,.2f}"},
+                        {"type": "text", "text": business_date.isoformat()},
+                        {"type": "text", "text": society_name or "Society"},
                     ],
                 }
             )
-        components.append(
-            {
-                "type": "body",
-                "parameters": [
-                    {"type": "text", "text": receipt_number or str(receipt_id)},
-                    {"type": "text", "text": flat_number or str(flat_id)},
-                    {"type": "text", "text": f"Rs. {amount:,.2f}"},
-                    {"type": "text", "text": business_date.isoformat()},
-                    {"type": "text", "text": society_name or "Society"},
-                ],
+            # NOTE: Do NOT send a URL button component. The receipt PDF is delivered
+            # via the DOCUMENT header (header/document). The current approved template's
+            # button at index 0 is a QuickReply, so sending
+            # {"type":"button","sub_type":"url","index":"0",...} triggers
+            # (#132018) "Button at index 0 must be of type QuickReply".
+            # The DOCUMENT header itself is downloadable without any button.
+            # If a future template uses a URL button with a {{1}} variable (e.g.
+            # https://...{{1}}), re-enable with a guard on
+            # WHATSAPP_TEMPLATE_HAS_URL_BUTTON=1 and send only the variable suffix.
+            body = {
+                "messaging_product": "whatsapp",
+                "to": to_number,
+                "type": "template",
+                "template": {
+                    "name": template_name,
+                    "language": {"code": template_lang},
+                    "components": components,
+                },
             }
-        )
-        # NOTE: Do NOT send a URL button component. The receipt PDF is delivered
-        # via the DOCUMENT header (header/document). The current approved template's
-        # button at index 0 is a QuickReply, so sending
-        # {"type":"button","sub_type":"url","index":"0",...} triggers
-        # (#132018) "Button at index 0 must be of type QuickReply".
-        # The DOCUMENT header itself is downloadable without any button.
-        # If a future template uses a URL button with a {{1}} variable (e.g.
-        # https://...{{1}}), re-enable with a guard on
-        # WHATSAPP_TEMPLATE_HAS_URL_BUTTON=1 and send only the variable suffix.
-        body = {
-            "messaging_product": "whatsapp",
-            "to": to_number,
-            "type": "template",
-            "template": {
-                "name": template_name,
-                "language": {"code": template_lang},
-                "components": components,
-            },
-        }
-        try:
-            req = urllib.request.Request(
-                f"https://graph.facebook.com/v20.0/{phone_id}/messages",
-                data=json.dumps(body).encode("utf-8"),
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as response:
-                data = json.loads(response.read().decode("utf-8") or "{}")
-                provider_message_id = (data.get("messages") or [{}])[0].get("id")
-                print(
-                    f"[live] WhatsApp SENT receipt={receipt_number or receipt_id} "
-                    f"to={to_number} provider_message_id={provider_message_id or ''}"
+            try:
+                req = urllib.request.Request(
+                    f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+                    data=json.dumps(body).encode("utf-8"),
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    method="POST",
                 )
-        except urllib.error.HTTPError as error:
-            status = "FAILED"
-            response_body = error.read().decode("utf-8", errors="replace")
-            failure_reason = f"HTTP {error.code}: {response_body}" if response_body else str(error)
-            msg = f"{msg} failed: {failure_reason}"
-            print(
-                f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
-                f"to={to_number} reason={failure_reason}"
-            )
-        except (urllib.error.URLError, TimeoutError, ValueError) as error:
-            status = "FAILED"
-            failure_reason = str(error)
-            msg = f"{msg} failed: {failure_reason}"
-            print(
-                f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
-                f"to={to_number} reason={failure_reason}"
-            )
+                with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as response:
+                    data = json.loads(response.read().decode("utf-8") or "{}")
+                    provider_message_id = (data.get("messages") or [{}])[0].get("id")
+                    print(
+                        f"[live] WhatsApp SENT receipt={receipt_number or receipt_id} "
+                        f"to={to_number} provider_message_id={provider_message_id or ''}"
+                    )
+            except urllib.error.HTTPError as error:
+                status = "FAILED"
+                response_body = error.read().decode("utf-8", errors="replace")
+                failure_reason = f"HTTP {error.code}: {response_body}" if response_body else str(error)
+                msg = f"{msg} failed: {failure_reason}"
+                print(
+                    f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
+                    f"to={to_number} reason={failure_reason}"
+                )
+            except (urllib.error.URLError, TimeoutError, ValueError) as error:
+                status = "FAILED"
+                failure_reason = str(error)
+                msg = f"{msg} failed: {failure_reason}"
+                print(
+                    f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
+                    f"to={to_number} reason={failure_reason}"
+                )
         n = Notification(
             id=uuid.uuid4(),
             society_id=society_id,

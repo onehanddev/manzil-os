@@ -136,7 +136,28 @@ def test_live_whatsapp_mode_sends_receipt_to_configured_test_number(conn, monkey
 
     monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
 
-    receipt = _create_numbered_receipt(client, token, business_date="2027-06-06", amount=1800)
+    # Production routing now prefers the flat's linked occupant (owner/tenant)
+    # over WHATSAPP_TEST_TO (which is now a fallback). Align the occupant's
+    # mobile with the test number so the assertion remains deterministic.
+    fund_id = _fund(client, token)
+    flat_id, owner_id, _, _ = _setup_flat_with_occupants(client, token)
+    with psycopg.connect(TEST_DB_URL, autocommit=True) as _db:
+        with _db.cursor() as _cur:
+            _cur.execute("UPDATE persons SET mobile=%s WHERE id=%s", ("919876543210", owner_id))
+    _resp = client.post(
+        "/api/receipts",
+        headers=_auth_header(token),
+        json={
+            "flat_id": flat_id,
+            "amount": 1800,
+            "business_date": "2027-06-06",
+            "fund_id": fund_id,
+            "payer_person_id": owner_id,
+            "narration": f"ISS13-{uuid.uuid4().hex[:6]}",
+        },
+    )
+    assert _resp.status_code == 201, _resp.text
+    receipt = _resp.json()
 
     assert receipt["whatsapp_status"] == "SENT"
     assert len(sent_requests) == 1
@@ -193,7 +214,27 @@ def test_live_whatsapp_mode_reads_backend_env_file_and_logs_success(conn, monkey
 
     monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
 
-    receipt = _create_numbered_receipt(client, token, business_date="2027-06-09", amount=1800)
+    # Align occupant mobile with the env fallback so the new occupant-first
+    # routing still asserts the fallback number.
+    fund_id = _fund(client, token)
+    flat_id, owner_id, _, _ = _setup_flat_with_occupants(client, token)
+    with psycopg.connect(TEST_DB_URL, autocommit=True) as _db:
+        with _db.cursor() as _cur:
+            _cur.execute("UPDATE persons SET mobile=%s WHERE id=%s", ("919876543210", owner_id))
+    _resp = client.post(
+        "/api/receipts",
+        headers=_auth_header(token),
+        json={
+            "flat_id": flat_id,
+            "amount": 1800,
+            "business_date": "2027-06-09",
+            "fund_id": fund_id,
+            "payer_person_id": owner_id,
+            "narration": f"ISS13-{uuid.uuid4().hex[:6]}",
+        },
+    )
+    assert _resp.status_code == 201, _resp.text
+    receipt = _resp.json()
 
     assert receipt["whatsapp_status"] == "SENT"
     assert b'"to": "919876543210"' in sent_requests[0][0].data

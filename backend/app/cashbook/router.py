@@ -276,11 +276,35 @@ def _send_receipt_whatsapp(db: Session, receipt: Receipt, society_id: uuid.UUID)
         if receipt.payer_person_id
         else None
     )
+    # Fallback: if receipt has no explicit payer, use the flat's active occupant
+    # (owner preferred) so tenant/owner linked to a flat gets the receipt on WhatsApp.
+    # backend/app/models.py:198 FlatOccupant
+    fallback_occupant_person = None
+    if payer is None:
+        from app.models import FlatOccupant
+
+        occupant_links = db.execute(
+            select(FlatOccupant).where(
+                FlatOccupant.flat_id == receipt.flat_id, FlatOccupant.is_active.is_(True)
+            )
+        ).scalars().all()
+        if occupant_links:
+            owner_link = next((o for o in occupant_links if o.role == "OWNER"), occupant_links[0])
+            fallback_occupant_person = db.execute(
+                select(Person).where(Person.id == owner_link.person_id, Person.society_id == society_id)
+            ).scalar_one_or_none()
+
+    effective_payer_id = receipt.payer_person_id or (
+        fallback_occupant_person.id if fallback_occupant_person else None
+    )
+    effective_payer_mobile = (payer.mobile if payer else None) or (
+        fallback_occupant_person.mobile if fallback_occupant_person else None
+    )
     return get_notification_provider().send_receipt_notification(
         db=db,
         society_id=society_id,
         receipt_id=receipt.id,
-        payer_person_id=receipt.payer_person_id,
+        payer_person_id=effective_payer_id,
         flat_id=receipt.flat_id,
         business_date=receipt.business_date,
         amount=float(receipt.amount),
@@ -288,7 +312,7 @@ def _send_receipt_whatsapp(db: Session, receipt: Receipt, society_id: uuid.UUID)
         receipt_number=receipt.receipt_number,
         flat_number=flat.flat_number if flat else None,
         society_name=society.name if society else None,
-        payer_mobile=payer.mobile if payer else None,
+        payer_mobile=effective_payer_mobile,
         pdf_url=_receipt_public_pdf_url(receipt),
     )
 
