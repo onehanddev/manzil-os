@@ -404,11 +404,15 @@ class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (
         CheckConstraint("provider_mode IN ('test', 'live')", name="notifications_provider_mode_check"),
-        CheckConstraint("status IN ('LOGGED', 'SENT', 'FAILED')", name="notifications_status_check"),
+        CheckConstraint(
+            "status IN ('LOGGED', 'SENT', 'DELIVERED', 'READ', 'FAILED')",
+            name="notifications_status_check",
+        ),
         Index("notifications_by_society", "society_id"),
         Index("notifications_by_receipt", "receipt_id"),
         Index("notifications_by_society_date", "society_id", "business_date"),
         Index("notifications_by_created_at", "created_at"),
+        Index("notifications_by_provider_message_id", "provider_message_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

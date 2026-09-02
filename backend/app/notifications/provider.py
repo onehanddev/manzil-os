@@ -127,6 +127,26 @@ class TestNotificationProvider(NotificationProvider):
         return n
 
 
+def _absolute_pdf_url(pdf_url: str | None) -> str | None:
+    if not pdf_url:
+        return None
+    if pdf_url.startswith("http://") or pdf_url.startswith("https://"):
+        return pdf_url
+    base = (
+        _get_env("PUBLIC_BASE_URL")
+        or _get_env("APP_BASE_URL")
+        or _get_env("FRONTEND_URL")
+        or _get_env("WHATSAPP_PDF_BASE_URL")
+        or _get_env("SITE_URL")
+        or _get_env("NEXT_APP_URL")
+        or _get_env("PUBLIC_SITE_URL")
+        or ""
+    )
+    if base:
+        return f"{base.rstrip('/')}{pdf_url}"
+    return pdf_url
+
+
 class LiveWhatsAppProvider(NotificationProvider):
     """Meta WhatsApp Cloud API sender for receipt utility templates."""
 
@@ -161,6 +181,42 @@ class LiveWhatsAppProvider(NotificationProvider):
         status = "SENT"
         provider_message_id = None
         failure_reason = None
+        abs_pdf_url = _absolute_pdf_url(pdf_url) if pdf_url else None
+        components: list[dict] = []
+        if abs_pdf_url:
+            filename = f"{(receipt_number or str(receipt_id)).replace('/', '-')}.pdf"
+            components.append(
+                {
+                    "type": "header",
+                    "parameters": [
+                        {
+                            "type": "document",
+                            "document": {"link": abs_pdf_url, "filename": filename},
+                        }
+                    ],
+                }
+            )
+        components.append(
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": receipt_number or str(receipt_id)},
+                    {"type": "text", "text": flat_number or str(flat_id)},
+                    {"type": "text", "text": f"Rs. {amount:,.2f}"},
+                    {"type": "text", "text": business_date.isoformat()},
+                    {"type": "text", "text": society_name or "Society"},
+                ],
+            }
+        )
+        # NOTE: Do NOT send a URL button component. The receipt PDF is delivered
+        # via the DOCUMENT header (header/document). The current approved template's
+        # button at index 0 is a QuickReply, so sending
+        # {"type":"button","sub_type":"url","index":"0",...} triggers
+        # (#132018) "Button at index 0 must be of type QuickReply".
+        # The DOCUMENT header itself is downloadable without any button.
+        # If a future template uses a URL button with a {{1}} variable (e.g.
+        # https://...{{1}}), re-enable with a guard on
+        # WHATSAPP_TEMPLATE_HAS_URL_BUTTON=1 and send only the variable suffix.
         body = {
             "messaging_product": "whatsapp",
             "to": to_number,
@@ -168,24 +224,9 @@ class LiveWhatsAppProvider(NotificationProvider):
             "template": {
                 "name": template_name,
                 "language": {"code": template_lang},
-                "components": [
-                    {
-                        "type": "body",
-                        "parameters": [
-                            {"type": "text", "text": receipt_number or str(receipt_id)},
-                            {"type": "text", "text": flat_number or str(flat_id)},
-                            {"type": "text", "text": f"Rs. {amount:,.2f}"},
-                            {"type": "text", "text": business_date.isoformat()},
-                            {"type": "text", "text": society_name or "Society"},
-                        ],
-                    }
-                ],
+                "components": components,
             },
         }
-        if pdf_url:
-            body["template"]["components"].append(
-                {"type": "button", "sub_type": "url", "index": "0", "parameters": [{"type": "text", "text": pdf_url}]}
-            )
         try:
             req = urllib.request.Request(
                 f"https://graph.facebook.com/v20.0/{phone_id}/messages",

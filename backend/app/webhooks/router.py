@@ -31,10 +31,42 @@ import hashlib
 import hmac
 import os
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import PlainTextResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db import get_db
+from app.models import Notification
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+# Map Meta status -> our notification.status (upper-cased, constrained)
+_STATUS_MAP = {
+    "sent": "SENT",
+    "delivered": "DELIVERED",
+    "read": "READ",
+    "failed": "FAILED",
+    "deleted": "FAILED",
+}
+
+
+def _extract_statuses(payload: dict) -> list[dict]:
+    """Flatten Meta's nested entry[].changes[].value.statuses[] into a list."""
+    statuses: list[dict] = []
+    for entry in payload.get("entry") or []:
+        for change in entry.get("changes") or []:
+            value = change.get("value") or {}
+            for s in value.get("statuses") or []:
+                if isinstance(s, dict) and s.get("id"):
+                    statuses.append(s)
+            # Some test payloads send value directly as status dict
+            if isinstance(value.get("status"), str) and value.get("id"):
+                statuses.append(value)
+    # Fallback: payload itself is a status (used in unit tests)
+    if not statuses and payload.get("id") and payload.get("status"):
+        statuses.append(payload)
+    return statuses
 
 
 def _get_verify_token() -> str | None:
@@ -105,7 +137,7 @@ async def whatsapp_verify(request: Request):
 
 
 @router.post("/whatsapp")
-async def whatsapp_events(request: Request):
+async def whatsapp_events(request: Request, db: Session = Depends(get_db)):
     """Receive Meta POST events (messages, statuses). Always 200 quickly."""
     body = await request.body()
 
@@ -117,10 +149,6 @@ async def whatsapp_events(request: Request):
             expected_sig = "sha256=" + hmac.new(app_secret.encode(), body, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(expected_sig, sig):
                 return Response(content="Invalid signature", status_code=403)
-        # If header missing but secret is set, we still accept (some test tools omit it)
-        # To enforce strictly, uncomment:
-        # else:
-        #     return Response(content="Missing signature", status_code=403)
 
     # Parse JSON (Meta nests 4 deep: entry[].changes[].value)
     try:
@@ -130,12 +158,57 @@ async def whatsapp_events(request: Request):
     except Exception:
         payload = {}
 
-    # Minimal logging – replace with your business logic (save to DB, reply via Graph API, etc.)
-    # For now we just acknowledge; inspect payload in server logs if needed.
     try:
         print(f"[whatsapp webhook] received: {payload}")
     except Exception:
         pass
+
+    # Persist status callbacks: match provider_message_id (wamid) -> notifications row
+    try:
+        for s in _extract_statuses(payload):
+            wamid = s.get("id")
+            raw_status = (s.get("status") or "").lower()
+            mapped = _STATUS_MAP.get(raw_status)
+            if not wamid or not mapped:
+                continue
+            failure_reason = None
+            if mapped == "FAILED":
+                errors = s.get("errors") or []
+                if errors and isinstance(errors, list):
+                    e = errors[0] or {}
+                    # Prefer Meta's title/detail, fall back to code
+                    title = e.get("title") or e.get("detail") or e.get("error_data", {}).get("details")
+                    code = e.get("code")
+                    detail = e.get("href") or ""
+                    parts = [p for p in [title, f"code {code}" if code else None, detail] if p]
+                    failure_reason = " | ".join(str(p) for p in parts) or str(e)
+                else:
+                    failure_reason = s.get("errors") or s.get("failure_reason") or "failed"
+
+            row = db.execute(
+                select(Notification).where(Notification.provider_message_id == wamid)
+            ).scalars().first()
+            if not row:
+                print(f"[whatsapp webhook] no notification for wamid={wamid} status={raw_status}")
+                continue
+            # Don't downgrade READ/DELIVERED -> SENT, but always allow FAILED
+            rank = {"LOGGED": 0, "SENT": 1, "DELIVERED": 2, "READ": 3, "FAILED": 99}
+            current_rank = rank.get(row.status, -1)
+            new_rank = rank.get(mapped, -1)
+            should_update = mapped == "FAILED" or new_rank > current_rank
+            if should_update:
+                row.status = mapped  # type: ignore[assignment]
+                if failure_reason:
+                    row.failure_reason = failure_reason  # type: ignore[assignment]
+                print(f"[whatsapp webhook] updated wamid={wamid} -> {mapped} failure={failure_reason or ''}")
+        db.commit()
+    except Exception as e:
+        # Never fail the webhook – log and still return 200 so Meta stops retrying
+        try:
+            print(f"[whatsapp webhook] persist error: {e}")
+            db.rollback()
+        except Exception:
+            pass
 
     # Meta expects 200 within ~3s; do not block on heavy work here – enqueue instead.
     return Response(content="EVENT_RECEIVED", status_code=200)
