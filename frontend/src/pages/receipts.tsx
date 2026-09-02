@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, ApiError } from '@/lib/api/client'
+import { api } from '@/lib/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -47,6 +47,7 @@ type Receipt = {
   public_pdf_url?: string | null
   whatsapp_status?: string | null
   whatsapp_failure_reason?: string | null
+  created_at?: string | null
 }
 
 const API_BASE = getApiBase()
@@ -131,7 +132,10 @@ export function ReceiptsPage() {
       return api.get<{ receipts: Receipt[] }>(`/receipts${qs ? `?${qs}` : ''}`)
     },
   })
-  const receipts = receiptData?.receipts ?? []
+  const receipts = useMemo(() => {
+    const list = receiptData?.receipts ?? []
+    return [...list].sort((a, b) => b.business_date.localeCompare(a.business_date) || (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+  }, [receiptData?.receipts])
 
   const [selectedFlatId, setSelectedFlatId] = useState('')
   const [amount, setAmount] = useState('')
@@ -211,9 +215,9 @@ export function ReceiptsPage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['receipts'] })
-      toast.success('Receipt submitted (POSTED) — undo available via history')
+      toast.success('Receipt recorded')
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to submit receipt'),
+    onError: () => toast.error('Could not record receipt. Check your entries and try again.'),
   })
 
   const voidReceipt = useMutation({
@@ -225,16 +229,16 @@ export function ReceiptsPage() {
       setVoidReason('')
       setSelectedReceipt(null)
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to void'),
+    onError: () => toast.error('Could not void receipt. Try again.'),
   })
 
   const resendWhatsApp = useMutation({
     mutationFn: (id: string) => api.post(`/receipts/${id}/whatsapp-resend`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['receipts'] })
-      toast.success('WhatsApp receipt queued')
+      toast.success('Receipt share queued')
     },
-    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : 'Failed to resend WhatsApp'),
+    onError: () => toast.error('Could not queue receipt share. Try again.'),
   })
 
   const activeFilterCount = [appliedFilters.from, appliedFilters.to, appliedFilters.flat_id, appliedFilters.collector_id].filter(Boolean).length
@@ -545,7 +549,9 @@ export function ReceiptsPage() {
                       {r.fund_id && <div><span className="text-muted-foreground">Fund:</span> {fundById.get(r.fund_id) ?? '—'}</div>}
                       <div><span className="text-muted-foreground">Status:</span> {statusLabel(r.status)}</div>
                       {isVoided && <div className="text-destructive text-xs">Voided {r.voided_at?.slice(0, 16)} · {r.void_reason ?? 'no reason'}</div>}
-                      {r.whatsapp_status && <div className="text-xs text-muted-foreground">WhatsApp: {r.whatsapp_status}{r.whatsapp_failure_reason ? ` · ${r.whatsapp_failure_reason}` : ''}</div>}
+                      {r.whatsapp_status === 'DELIVERED' && <div className="text-xs text-muted-foreground">Receipt delivered</div>}
+                      {r.whatsapp_status === 'SENT' && <div className="text-xs text-muted-foreground">Receipt sent</div>}
+                      {r.whatsapp_status === 'LOGGED' && <div className="text-xs text-muted-foreground">Receipt queued</div>}
                     </div>
                   </div>
 

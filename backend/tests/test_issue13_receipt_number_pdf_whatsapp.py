@@ -92,9 +92,10 @@ def test_existing_receipts_without_token_get_public_pdf_url(conn):
     assert public_response.content.startswith(b"%PDF")
 
 
-def test_receipt_exposes_whatsapp_status_and_resend_logs_again_in_test_mode(conn):
+def test_receipt_exposes_whatsapp_status_and_resend_logs_again_in_test_mode(conn, monkeypatch):
     client = _client()
     token = _admin_token(client)
+    monkeypatch.setattr("app.notifications.provider._ENV_PATHS", [])
     receipt = _create_numbered_receipt(client, token, business_date="2027-05-05", amount=1500)
 
     detail = client.get(f"/api/receipts/{receipt['id']}", headers=_auth_header(token))
@@ -129,7 +130,7 @@ def test_live_whatsapp_mode_sends_receipt_to_configured_test_number(conn, monkey
             return b'{"messages":[{"id":"wamid.TEST_RECEIPT"}]}'
 
     @contextmanager
-    def _mock_urlopen(request, timeout):
+    def _mock_urlopen(request, timeout, context=None):
         sent_requests.append((request, timeout))
         yield _Response()
 
@@ -152,6 +153,86 @@ def test_live_whatsapp_mode_sends_receipt_to_configured_test_number(conn, monkey
     assert matching[-1]["provider_message_id"] == "wamid.TEST_RECEIPT"
 
 
+def test_live_whatsapp_mode_reads_backend_env_file_and_logs_success(conn, monkeypatch, tmp_path, capsys):
+    client = _client()
+    token = _admin_token(client)
+    sent_requests = []
+
+    for key in (
+        "PROVIDER_MODE",
+        "WHATSAPP_TOKEN",
+        "WHATSAPP_PHONE_ID",
+        "WHATSAPP_TEMPLATE_NAME",
+        "WHATSAPP_TEMPLATE_LANG",
+        "WHATSAPP_TEST_TO",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        '\n'.join(
+            [
+                'PROVIDER_MODE="live"',
+                'WHATSAPP_TOKEN="test-meta-token"',
+                'WHATSAPP_PHONE_ID="1234567890"',
+                'WHATSAPP_TEMPLATE_NAME="maintenance_receipt"',
+                'WHATSAPP_TEMPLATE_LANG="en_US"',
+                'WHATSAPP_TEST_TO="919876543210"',
+            ]
+        )
+    )
+    monkeypatch.setattr("app.notifications.provider._ENV_PATHS", [env_file])
+
+    class _Response:
+        def read(self):
+            return b'{"messages":[{"id":"wamid.TEST_RECEIPT"}]}'
+
+    @contextmanager
+    def _mock_urlopen(request, timeout, context=None):
+        sent_requests.append((request, timeout))
+        yield _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
+
+    receipt = _create_numbered_receipt(client, token, business_date="2027-06-09", amount=1800)
+
+    assert receipt["whatsapp_status"] == "SENT"
+    assert b'"to": "919876543210"' in sent_requests[0][0].data
+    out = capsys.readouterr().out
+    assert "[live] WhatsApp SENT" in out
+    assert "wamid.TEST_RECEIPT" in out
+
+
+def test_live_whatsapp_mode_uses_certifi_ssl_context(conn, monkeypatch):
+    client = _client()
+    token = _admin_token(client)
+    ssl_context = object()
+    sent_contexts = []
+
+    monkeypatch.setenv("PROVIDER_MODE", "live")
+    monkeypatch.setenv("WHATSAPP_TOKEN", "test-meta-token")
+    monkeypatch.setenv("WHATSAPP_PHONE_ID", "1234567890")
+    monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "maintenance_receipt")
+    monkeypatch.setenv("WHATSAPP_TEST_TO", "919876543210")
+    monkeypatch.setattr("app.notifications.provider._ENV_PATHS", [])
+    monkeypatch.setattr("app.notifications.provider._ssl_context", lambda: ssl_context)
+
+    class _Response:
+        def read(self):
+            return b'{"messages":[{"id":"wamid.TEST_RECEIPT"}]}'
+
+    @contextmanager
+    def _mock_urlopen(request, timeout, context=None):
+        sent_contexts.append(context)
+        yield _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen)
+
+    receipt = _create_numbered_receipt(client, token, business_date="2027-06-10", amount=1800)
+
+    assert receipt["whatsapp_status"] == "SENT"
+    assert sent_contexts == [ssl_context]
+
+
 def test_live_whatsapp_mode_sends_receipt_to_payer_mobile_without_test_override(conn, monkeypatch):
     client = _client()
     token = _admin_token(client)
@@ -162,13 +243,14 @@ def test_live_whatsapp_mode_sends_receipt_to_payer_mobile_without_test_override(
     monkeypatch.setenv("WHATSAPP_PHONE_ID", "1234567890")
     monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "maintenance_receipt")
     monkeypatch.delenv("WHATSAPP_TEST_TO", raising=False)
+    monkeypatch.setattr("app.notifications.provider._ENV_PATHS", [])
 
     class _Response:
         def read(self):
             return b'{"messages":[{"id":"wamid.PAYER_RECEIPT"}]}'
 
     @contextmanager
-    def _mock_urlopen(request, timeout):
+    def _mock_urlopen(request, timeout, context=None):
         sent_requests.append((request, timeout))
         yield _Response()
 
@@ -209,7 +291,7 @@ def test_live_whatsapp_failure_logs_meta_error_body(conn, monkeypatch, _supabase
     monkeypatch.setenv("WHATSAPP_TEMPLATE_LANG", "en_US")
     monkeypatch.setenv("WHATSAPP_TEST_TO", "919876543210")
 
-    def _mock_urlopen(request, timeout):
+    def _mock_urlopen(request, timeout, context=None):
         raise urllib.error.HTTPError(
             request.full_url,
             400,

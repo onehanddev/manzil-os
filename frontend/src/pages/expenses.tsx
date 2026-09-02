@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowUpRight, ChevronDown, ChevronUp, Filter, ReceiptIndianRupee } from 'lucide-react'
-import { api, ApiError } from '@/lib/api/client'
+import { api } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -132,7 +132,10 @@ export function ExpensesPage() {
       return api.get<{ expenses: Expense[] }>(`/expenses${query ? `?${query}` : ''}`)
     },
   })
-  const expenses = expensesQuery.data?.expenses ?? []
+  const expenses = useMemo(() => {
+    const list = expensesQuery.data?.expenses ?? []
+    return [...list].sort((a, b) => b.business_date.localeCompare(a.business_date) || (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+  }, [expensesQuery.data?.expenses])
 
   const selectedVendorName = vendorId
     ? vendors.find((vendor) => vendor.id === vendorId)?.name ?? ''
@@ -166,11 +169,8 @@ export function ExpensesPage() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] })
       queryClient.invalidateQueries({ queryKey: ['vendors'] })
     },
-    onError: (error: unknown) => {
-      const message = error instanceof ApiError && error.status < 500
-        ? error.message
-        : 'The expense could not be recorded. Check your connection and try again.'
-      setRequestError(message)
+    onError: () => {
+      setRequestError('The expense could not be recorded. Check your connection and try again.')
     },
   })
 

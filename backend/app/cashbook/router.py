@@ -540,7 +540,7 @@ def list_receipts(
     payer_person_id: str | None = Query(None, description="Filter by payer"),
 ):
     society_id = _get_society_id(current)
-    q = select(Receipt).where(Receipt.society_id == society_id).order_by(Receipt.business_date, Receipt.created_at)
+    q = select(Receipt).where(Receipt.society_id == society_id).order_by(Receipt.business_date.desc(), Receipt.created_at.desc())
     if not include_voided:
         q = q.where(Receipt.status != "VOIDED")
     effective_from = from_date or date_from
@@ -696,7 +696,7 @@ def list_expenses(
     fund_id: str | None = Query(None, description="Filter by Fund"),
 ):
     society_id = _get_society_id(current)
-    q = select(Expense).where(Expense.society_id == society_id).order_by(Expense.business_date, Expense.created_at)
+    q = select(Expense).where(Expense.society_id == society_id).order_by(Expense.business_date.desc(), Expense.created_at.desc())
     if from_date:
         try:
             fd = date.fromisoformat(from_date)

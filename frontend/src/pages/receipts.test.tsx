@@ -125,7 +125,7 @@ describe('ReceiptsPage — maintenance_amount prefill (TDD)', () => {
     const dialog = await screen.findByRole('dialog')
     const { within } = await import('@testing-library/react')
     expect(within(dialog).getByRole('link', { name: /Download PDF/i })).toHaveAttribute('href', 'http://localhost:8000/receipts/receipt-13/pdf?token=public-token-13')
-    expect(within(dialog).getByText(/LOGGED/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/queued/i)).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: /Resend WhatsApp/i }))
     expect(resendCalled).toBe(true)

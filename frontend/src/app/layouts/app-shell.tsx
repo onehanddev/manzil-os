@@ -42,6 +42,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  SheetDescription,
+  SheetHeader,
+} from '@/components/ui/sheet'
 
 type NavItem = {
   to: string
@@ -178,6 +182,7 @@ type BellNotification = {
 }
 
 export function NotificationBell() {
+  const [open, setOpen] = useState(false)
   const notifications = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api.get<{ notifications: BellNotification[] }>('/notifications'),
@@ -187,30 +192,42 @@ export function NotificationBell() {
   const label = `Notifications (${rows.length})`
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={label} className="relative" />}>
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger
+        render={<Button variant="ghost" size="icon" aria-label={label} className="relative" />}
+      >
         <Bell className="size-4" />
         {rows.length > 0 && (
-          <span className="absolute right-1 top-1 min-w-4 rounded-full bg-destructive px-1 text-[10px] leading-4 text-destructive-foreground">
+          <span className="absolute -right-1 -top-1 flex min-h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold leading-none text-white ring-2 ring-background shadow-sm">
             {rows.length > 9 ? '9+' : rows.length}
           </span>
         )}
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {rows.length === 0 ? (
-          <DropdownMenuItem disabled>No notifications yet</DropdownMenuItem>
-        ) : rows.map((notification) => (
-          <DropdownMenuItem key={notification.id} className="items-start whitespace-normal">
-            <div className="space-y-1">
-              <p className="text-sm">{notification.message ?? `${notification.channel} notification`}</p>
-              {notification.created_at && <p className="text-xs text-muted-foreground">{new Date(notification.created_at).toLocaleString()}</p>}
+      </SheetTrigger>
+      <SheetContent side="bottom" className="pb-[env(safe-area-inset-bottom)] max-h-[92dvh] overflow-y-auto">
+        <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-border" aria-hidden />
+        <SheetHeader>
+          <SheetTitle>Notifications</SheetTitle>
+          <SheetDescription>Recent updates for your society</SheetDescription>
+        </SheetHeader>
+        <div className="space-y-3 p-4">
+          {rows.length === 0 ? (
+            <div className="rounded-xl border border-dashed p-6 text-center">
+              <p className="text-sm font-medium">No notifications yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">New receipts and reports will appear here.</p>
             </div>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          ) : (
+            rows.map((notification) => (
+              <div key={notification.id} className="rounded-xl border bg-card p-3">
+                <p className="text-sm leading-relaxed">{notification.message ?? 'New update'}</p>
+                {notification.created_at && (
+                  <p className="mt-1 text-xs text-muted-foreground">{new Date(notification.created_at).toLocaleString()}</p>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 

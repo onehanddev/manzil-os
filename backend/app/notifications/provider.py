@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
+import ssl
 import uuid
 import urllib.error
 import urllib.request
@@ -21,6 +23,46 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.models import Notification
+
+
+_ENV_PATHS = [
+    pathlib.Path(__file__).resolve().parents[2] / ".env",
+    pathlib.Path(__file__).resolve().parents[3] / ".env",
+]
+
+
+def _get_env(name: str, default: str | None = None) -> str | None:
+    val = os.environ.get(name)
+    if val:
+        val = val.strip().strip('"').strip("'")
+        if val:
+            return val
+    for env_path in _ENV_PATHS:
+        try:
+            if not env_path.exists():
+                continue
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or not line.startswith(name):
+                    continue
+                key, _, raw = line.partition("=")
+                if key.strip() != name:
+                    continue
+                candidate = raw.strip().strip('"').strip("'")
+                if candidate and not candidate.startswith("#"):
+                    return candidate
+        except OSError:
+            continue
+    return default
+
+
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 class NotificationProvider(ABC):
@@ -108,12 +150,12 @@ class LiveWhatsAppProvider(NotificationProvider):
         payer_mobile: str | None = None,
         pdf_url: str | None = None,
     ) -> Notification:
-        token = os.environ["WHATSAPP_TOKEN"]
-        phone_id = os.environ["WHATSAPP_PHONE_ID"]
-        template_name = os.environ["WHATSAPP_TEMPLATE_NAME"]
-        template_lang = os.environ.get("WHATSAPP_TEMPLATE_LANG", "en_US")
+        token = _get_env("WHATSAPP_TOKEN")
+        phone_id = _get_env("WHATSAPP_PHONE_ID")
+        template_name = _get_env("WHATSAPP_TEMPLATE_NAME")
+        template_lang = _get_env("WHATSAPP_TEMPLATE_LANG", "en_US")
         to_number = self._meta_phone_number(
-            os.environ.get("WHATSAPP_TEST_TO") or payer_mobile
+            _get_env("WHATSAPP_TEST_TO") or payer_mobile
         )
         msg = f"[live] receipt {receipt_number or receipt_id} flat {flat_number or flat_id} amount {amount}"
         status = "SENT"
@@ -151,18 +193,30 @@ class LiveWhatsAppProvider(NotificationProvider):
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as response:
                 data = json.loads(response.read().decode("utf-8") or "{}")
                 provider_message_id = (data.get("messages") or [{}])[0].get("id")
+                print(
+                    f"[live] WhatsApp SENT receipt={receipt_number or receipt_id} "
+                    f"to={to_number} provider_message_id={provider_message_id or ''}"
+                )
         except urllib.error.HTTPError as error:
             status = "FAILED"
             response_body = error.read().decode("utf-8", errors="replace")
             failure_reason = f"HTTP {error.code}: {response_body}" if response_body else str(error)
             msg = f"{msg} failed: {failure_reason}"
+            print(
+                f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
+                f"to={to_number} reason={failure_reason}"
+            )
         except (urllib.error.URLError, TimeoutError, ValueError) as error:
             status = "FAILED"
             failure_reason = str(error)
             msg = f"{msg} failed: {failure_reason}"
+            print(
+                f"[live] WhatsApp FAILED receipt={receipt_number or receipt_id} "
+                f"to={to_number} reason={failure_reason}"
+            )
         n = Notification(
             id=uuid.uuid4(),
             society_id=society_id,
@@ -183,9 +237,9 @@ class LiveWhatsAppProvider(NotificationProvider):
 
 
 def get_notification_provider() -> NotificationProvider:
-    mode = os.environ.get("PROVIDER_MODE", "test").strip().lower()
+    mode = (_get_env("PROVIDER_MODE", "test") or "test").strip().lower()
     has_whatsapp_credentials = all(
-        os.environ.get(key) for key in ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_TEMPLATE_NAME")
+        _get_env(key) for key in ("WHATSAPP_TOKEN", "WHATSAPP_PHONE_ID", "WHATSAPP_TEMPLATE_NAME")
     )
     if mode == "live" and has_whatsapp_credentials:
         return LiveWhatsAppProvider()
@@ -213,7 +267,7 @@ class LiveReceiptRenderer(ReceiptRenderer):
 
 
 def get_receipt_renderer() -> ReceiptRenderer:
-    mode = os.environ.get("PROVIDER_MODE", "test").strip().lower()
+    mode = (_get_env("PROVIDER_MODE", "test") or "test").strip().lower()
     if mode == "live":
         return LiveReceiptRenderer()
     return TestReceiptRenderer()
