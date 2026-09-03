@@ -8,7 +8,6 @@ on:
         type: choice
         default: staging
         options: [staging, production]
-        
 
 jobs:
   migrate:
@@ -16,6 +15,10 @@ jobs:
     environment: ${{ inputs.target }} # ties to GitHub Environment `staging`/`production`
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history to ensure all files are available
+          ref: main       # Explicitly check out main branch
+      
       - uses: astral-sh/setup-uv@v5
 
       - name: Install deps
