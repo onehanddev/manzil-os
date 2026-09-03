@@ -8,6 +8,7 @@ on:
         type: choice
         default: staging
         options: [staging, production]
+        
 
 jobs:
   migrate:
@@ -22,10 +23,12 @@ jobs:
 
       - name: Run migrations
         run: uv run --project backend alembic upgrade head
+        working-directory: backend
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }} # injected from GitHub Secret, not Render/Vercel
-
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      
       - name: Show current version
         run: uv run --project backend alembic current
+        working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
