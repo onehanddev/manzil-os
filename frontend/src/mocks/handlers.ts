@@ -519,6 +519,10 @@ export const handlers = [
       }))
     return HttpResponse.json({ notifications: notifs })
   }),
+  http.get('*/api/admin/pending', () => HttpResponse.json({ pending: [] })),
+  http.post('*/api/admin/users/:userId/approve', ({ params }) => {
+    return HttpResponse.json({ status: 'active', user_id: params.userId, role: 'COLLECTOR' })
+  }),
 
   // ---- Cash opening balance + report (T2) ----
   http.get('*/api/cash-opening-balance', ({ request }) => {

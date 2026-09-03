@@ -16,7 +16,8 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api/client'
@@ -199,14 +200,46 @@ type BellNotification = {
   created_at: string | null
 }
 
+type PendingApproval = {
+  user_id: string
+  mobile: string
+  display_name: string
+  membership_id: string
+  status: string
+}
+
 export function NotificationBell() {
   const [open, setOpen] = useState(false)
+  const [approvalMessage, setApprovalMessage] = useState<string | null>(null)
+  const queryClient = useQueryClient()
   const notifications = useQuery({
     queryKey: ['notifications'],
     queryFn: () => api.get<{ notifications: BellNotification[] }>('/notifications'),
     refetchInterval: 60_000,
   })
   const rows = notifications.data?.notifications ?? []
+  const hasSignupRequest = rows.some((row) => row.channel === 'IN_APP' && row.message?.includes('pending approval'))
+  const pending = useQuery({
+    queryKey: ['admin-pending'],
+    queryFn: () => api.get<{ pending: PendingApproval[] }>('/admin/pending'),
+    enabled: open && hasSignupRequest,
+    retry: false,
+  })
+  const pendingRows = pending.data?.pending ?? []
+  const approveUser = useMutation({
+    mutationFn: (userId: string) => api.post(`/admin/users/${userId}/approve`, { role: 'COLLECTOR' }),
+    onSuccess: (_data, userId) => {
+      const approved = pendingRows.find((row) => row.user_id === userId)
+      const message = `${approved?.display_name ?? 'User'} approved as collector`
+      setApprovalMessage(message)
+      toast.success(message)
+      void queryClient.invalidateQueries({ queryKey: ['admin-pending'] })
+      void queryClient.invalidateQueries({ queryKey: ['notifications'] })
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : 'Could not approve user')
+    },
+  })
   const label = `Notifications (${rows.length})`
 
   return (
@@ -228,6 +261,33 @@ export function NotificationBell() {
           <SheetDescription>Recent updates for your society</SheetDescription>
         </SheetHeader>
         <div className="space-y-3 p-4">
+          {approvalMessage && (
+            <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+              {approvalMessage}
+            </p>
+          )}
+          {pendingRows.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+              <p className="text-sm font-semibold">Pending sign-up requests</p>
+              <div className="mt-3 space-y-2">
+                {pendingRows.map((pendingUser) => (
+                  <div key={pendingUser.user_id} className="rounded-lg bg-background/80 p-3 text-foreground shadow-sm">
+                    <p className="text-sm font-medium">{pendingUser.display_name}</p>
+                    <p className="text-xs text-muted-foreground">{pendingUser.mobile}</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="mt-3 w-full"
+                      disabled={approveUser.isPending}
+                      onClick={() => approveUser.mutate(pendingUser.user_id)}
+                    >
+                      Approve as collector
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {rows.length === 0 ? (
             <div className="rounded-xl border border-dashed p-6 text-center">
               <p className="text-sm font-medium">No notifications yet</p>
