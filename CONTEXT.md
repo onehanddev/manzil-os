@@ -24,6 +24,8 @@ Ubiquitous language for the pilot. Use these terms exactly; they name good seams
 ## Access
 
 - **User / SocietyMembership / Role** — `SOCIETY_ADMIN` can do everything in the pilot; `COLLECTOR` can create Receipts and view Reports; unauthenticated → 401, insufficient role → 403. Supabase JWT (`sub` → `users.auth_user_id`) is the auth seam.
+- **Onboarding** — first signup with no ACTIVE `SOCIETY_ADMIN` becomes `ACTIVE+SOCIETY_ADMIN` (`backend/app/auth/router.py:165`); that admin must complete `POST /api/onboarding/setup` (`backend/app/onboarding/router.py:80`) — `GET /api/onboarding/status` `needs_onboarding` blocks all protected routes (`frontend/src/app/layouts/app-shell.tsx:127`) until society + `cash_opening_balances` exist.
+- **Pending Approval** — any later `POST /auth/signup` creates `PENDING` membership (`backend/app/auth/router.py:172`) and an in-app `notifications` row for admins (`backend/app/auth/router.py:197`, `channel=IN_APP`); pending token `GET /api/me` → `roles=[]` but `GET /api/flats` 403 `Pending approval` (`backend/app/auth/deps.py:98`); admin `GET /api/admin/pending` lists, `POST /api/admin/users/{id}/approve {"role":"COLLECTOR"|"SOCIETY_ADMIN"}` activates (default `COLLECTOR`).
 
 ## Out of scope (Phase 0)
 

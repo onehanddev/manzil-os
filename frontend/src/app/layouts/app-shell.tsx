@@ -125,10 +125,15 @@ export function AppShell() {
   }, [currentSocietyId, societies, setCurrentSociety])
 
   useEffect(() => {
-    if (onboardingQ.data?.needs_onboarding && location.pathname !== '/onboarding') {
+    const isPending = !!me && (me.memberships?.length ?? 0) === 0 && !isAdmin && !isCollector
+    if (isPending && location.pathname !== '/pending') {
+      navigate('/pending', { replace: true })
+      return
+    }
+    if (onboardingQ.data?.needs_onboarding && location.pathname !== '/onboarding' && !isPending) {
       navigate('/onboarding', { replace: true })
     }
-  }, [onboardingQ.data, location.pathname, navigate])
+  }, [me, onboardingQ.data, location.pathname, navigate, isAdmin, isCollector])
 
   const handleLogout = useCallback(async () => {
     try {

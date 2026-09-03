@@ -23,7 +23,7 @@ from app.auth.supabase_client import (
     supabase_verify_otp,
 )
 from app.db import get_db
-from app.models import MembershipRole, Role, Society, SocietyMembership, User
+from app.models import MembershipRole, Notification, Role, Society, SocietyMembership, User
 
 router = APIRouter(tags=["auth"])
 
@@ -181,6 +181,22 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             role_row = db.execute(select(Role).where(Role.key == role_to_assign)).scalar_one_or_none()
             if role_row:
                 db.add(MembershipRole(society_membership_id=membership.id, role_id=role_row.id))
+        if status_val == "PENDING":
+            # In-app notification for SOCIETY_ADMINs to approve (Q8)
+            try:
+                notif = Notification(
+                    society_id=society_id,
+                    channel="IN_APP",
+                    provider_mode="test",
+                    status="LOGGED",
+                    message=f"New signup pending approval: {display_name} ({mobile})",
+                    user_id=None,
+                )
+                db.add(notif)
+                db.flush()
+            except Exception:
+                # notifications are best-effort; do not block signup
+                pass
         db.commit()
         supa = supabase_sign_in(mobile, payload.password)
         token = supa.get("access_token") if supa else None

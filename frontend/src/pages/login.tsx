@@ -80,6 +80,13 @@ export function LoginPage() {
       })
       if (session.status === 'pending') {
         setInfo('Account pending approval — an admin will approve shortly.')
+        const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
+        setAuth({
+          accessToken: session.access_token,
+          user: { id: me.user_id, displayName: me.mobile, mobile: me.mobile },
+        })
+        navigate('/pending', { replace: true })
+        return
       }
       const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
       setAuth({
@@ -118,11 +125,13 @@ export function LoginPage() {
               accessToken: token,
               user: { id: me.user_id, displayName: me.mobile, mobile: me.mobile },
             })
+            navigate('/pending', { replace: true })
           } catch {
             // token stored but me failed — keep pending message
           }
         }
         setInfo('Account created — pending admin approval. You can sign in after approval.')
+        if (token) return
         return
       }
       const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
