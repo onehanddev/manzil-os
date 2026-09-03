@@ -5,7 +5,7 @@ This file is the operating context for any AI agent working in this repository.
 ## Project
 
 Manzil OS is a society cashbook and maintenance pilot (Phase 0) — mobile-first PWA + FastAPI + PostgreSQL.
-See `PHASE_0_PRD.md` for scope and `PHASE_0_ISSUES.md` for the issue backlog.
+Phase 0 pilot complete; see `README.md` for current scope and demo, `DESIGN.md` + `NATIVE_UI_GUIDE.md` for UI rules, and `CONTEXT.md` for domain language.
 
 ## How We Work
 
@@ -51,11 +51,24 @@ npm test                            # Vitest + RTL
 
 ## What to Read First
 
-- `PHASE_0_PRD.md` — product destination and acceptance criteria.
-- `PHASE_0_ISSUES.md` — execution path as tracer-bullet issues. Work top-to-bottom.
+- `README.md` — current scope, demo walkthrough, and quick start.
 - `DESIGN.md` + `NATIVE_UI_GUIDE.md` — design tokens and native app shell rules. **Every frontend change must follow `NATIVE_UI_GUIDE.md`**: MobileSelect bottom drawer (not Select), NativeDateField calendar drawer (not browser date popover), bottom native toast, and tab + scroll containment (only the panel below tabs scrolls — not the whole page).
-- `CONTEXT.md` / ADRs in the area you are touching (if present) for domain language.
+- `CONTEXT.md` / ADRs in `docs/adr/` for domain language.
 - `backend/README.md` and `frontend/README.md` for stack and DB workflow.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues via `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical labels as-is (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context (`CONTEXT.md` + `docs/adr/`). See `docs/agents/domain.md`.
 
 ## Expectations for Every Issue
 

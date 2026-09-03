@@ -1,6 +1,6 @@
 # Manzil OS – Phase 0 Pilot
 
-Mobile-first PWA + FastAPI + PostgreSQL for society cashbook (opening cash → maintenance receipts → expenses → closing cash). See `PHASE_0_PRD.md` for scope and `PHASE_0_ISSUES.md` for the tracer-bullet backlog.
+Mobile-first PWA + FastAPI + PostgreSQL for society cashbook (opening cash → maintenance receipts → expenses → closing cash). Phase 0 pilot complete — see `AGENTS.md` for workflow, `CONTEXT.md` for domain language, and `DESIGN.md` for UI rules.
 
 ## Stack
 
