@@ -277,6 +277,12 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No local mapping")
     user_id = str(user.id)
+    # Prefer ACTIVE roles over latest PENDING status: a user with any ACTIVE
+    # membership should be considered active even if their latest membership
+    # (e.g. for a second society) is still PENDING.
+    society_id, roles = _get_roles_for_user(db, user_id)
+    if roles:
+        return {"access_token": supa["access_token"], "token_type": "bearer", "status": "active"}
     mem = db.execute(
         select(SocietyMembership.status)
         .where(SocietyMembership.user_id == user.id)
@@ -288,7 +294,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     status_val = mem
     if status_val == "PENDING":
         return {"access_token": supa["access_token"], "token_type": "bearer", "status": "pending"}
-    society_id, roles = _get_roles_for_user(db, user_id)
     if not roles:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No active membership")
     return {"access_token": supa["access_token"], "token_type": "bearer", "status": "active"}

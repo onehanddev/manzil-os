@@ -1,5 +1,6 @@
 import { useAuthStore } from '@/stores/auth-store'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Clock3 } from 'lucide-react'
@@ -7,9 +8,11 @@ import { Clock3 } from 'lucide-react'
 export function PendingPage() {
   const clear = useAuthStore((s) => s.clear)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   function handleSignOut() {
     clear()
+    queryClient.clear()
     navigate('/login', { replace: true })
   }
 

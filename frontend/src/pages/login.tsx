@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, Smartphone } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
@@ -54,6 +55,7 @@ export function LoginPage() {
   const setAuth = useAuthStore((s) => s.setAuth)
   const navigate = useNavigate()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard'
 
   const [mode, setMode] = useState<'login' | 'signup'>('login')
@@ -81,6 +83,7 @@ export function LoginPage() {
       if (session.status === 'pending') {
         setInfo('Account pending approval — an admin will approve shortly.')
         const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
+        queryClient.clear()
         setAuth({
           accessToken: session.access_token,
           user: { id: me.user_id, displayName: me.mobile, mobile: me.mobile },
@@ -89,6 +92,7 @@ export function LoginPage() {
         return
       }
       const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
+      queryClient.clear()
       setAuth({
         accessToken: session.access_token,
         user: {
@@ -121,6 +125,7 @@ export function LoginPage() {
         if (token) {
           try {
             const me = await getJson<MeResponse>(`${API_BASE}/me`, token)
+            queryClient.clear()
             setAuth({
               accessToken: token,
               user: { id: me.user_id, displayName: me.mobile, mobile: me.mobile },
@@ -135,6 +140,7 @@ export function LoginPage() {
         return
       }
       const me = await getJson<MeResponse>(`${API_BASE}/me`, session.access_token)
+      queryClient.clear()
       setAuth({
         accessToken: session.access_token,
         user: { id: me.user_id, displayName: me.mobile, mobile: me.mobile },
