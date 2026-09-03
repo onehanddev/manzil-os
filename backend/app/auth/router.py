@@ -204,6 +204,26 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             return {"access_token": token, "token_type": "bearer", "status": status_val.lower()}
         return {"status": status_val.lower(), "user_id": str(user.id)}
     db.commit()
+    # No society yet – onboarding will create it. Still mint a token so user can call /onboarding/setup
+    supa = supabase_sign_in(mobile, payload.password)
+    token = supa.get("access_token") if supa else None
+    if not token:
+        try:
+            from app.auth.supabase_client import get_supabase_jwt_secret
+
+            secret = get_supabase_jwt_secret()
+            if secret:
+                import jwt as pyjwt
+
+                token = pyjwt.encode(
+                    {"sub": str(auth_uuid), "phone": mobile, "aud": "authenticated", "exp": 9999999999},
+                    secret,
+                    algorithm="HS256",
+                )
+        except Exception:
+            token = None
+    if token:
+        return {"access_token": token, "token_type": "bearer", "status": "pending", "user_id": str(user.id)}
     return {"status": "pending", "user_id": str(user.id)}
 
 

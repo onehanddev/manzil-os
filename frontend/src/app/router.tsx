@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { LoginPage } from '@/pages/login'
+import { OnboardingPage } from '@/pages/onboarding'
 
 const protectedShellRoute = async () => ({ Component: (await import('./layouts/protected-app-shell')).ProtectedAppShell })
 const dashboardRoute = async () => ({ Component: (await import('@/pages/dashboard')).DashboardPage })
@@ -22,6 +23,7 @@ const notFoundRoute = async () => ({ Component: (await import('@/pages/not-found
 export const router = createBrowserRouter(
   [
     { path: '/login', element: <LoginPage /> },
+    { path: '/onboarding', element: <OnboardingPage /> },
     {
       lazy: protectedShellRoute,
       children: [

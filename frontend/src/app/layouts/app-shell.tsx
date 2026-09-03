@@ -83,11 +83,18 @@ function getInitials(name: string | undefined) {
 
 export function AppShell() {
   const { data: me, isLoading } = useMe()
+  const onboardingQ = useQuery({
+    queryKey: ['onboarding-status'],
+    queryFn: () => api.get<{ needs_onboarding: boolean }>('/onboarding/status'),
+    enabled: !isLoading && !!me,
+    retry: false,
+  })
   const user = useAuthStore((s) => s.user)
   const clearAuth = useAuthStore((s) => s.clear)
   const currentSocietyId = useSocietyStore((s) => s.currentSocietyId)
   const setCurrentSociety = useSocietyStore((s) => s.setCurrentSociety)
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   const societies = me?.memberships?.map((m) => m.society) ?? []
@@ -116,6 +123,12 @@ export function AppShell() {
       setCurrentSociety(societies[0].id)
     }
   }, [currentSocietyId, societies, setCurrentSociety])
+
+  useEffect(() => {
+    if (onboardingQ.data?.needs_onboarding && location.pathname !== '/onboarding') {
+      navigate('/onboarding', { replace: true })
+    }
+  }, [onboardingQ.data, location.pathname, navigate])
 
   const handleLogout = useCallback(async () => {
     try {
