@@ -308,18 +308,18 @@ def supabase_set_password(auth_user_id: str, password: str) -> bool:
 
 
 def supabase_create_user(mobile: str, password: str, display_name: str) -> str | None:
-    """Create user in Supabase auth via service role, return auth_user_id or None."""
+    """Create user in Supabase auth via service role, return auth_user_id or None.
+
+    If the phone/email already exists in auth.users (common after truncating
+    public.users but not auth.users), reuse the existing auth user and update
+    its password so the new public.users row can link to it. This makes local
+    DB wipes idempotent without manually clearing Supabase Auth.
+    """
     client = get_supabase_client(service_role=True)
     if client is None:
         return None
-    # Supabase phone auth: use phone + password; create via admin API with email fallback
-    # Use phone as phone, and synthetic email to satisfy Supabase email requirement when needed.
-    # Supabase allows phone-only if phone provider enabled; we try phone first.
+    synthetic_email = f"{mobile.replace('+', '')}@manzil.local"
     try:
-        # Try phone-based creation – Supabase admin expects email or phone
-        # Use synthetic email derived from mobile to keep compatibility with email/password flow
-        # Frontend uses OTP phone, but for password pilot we use email trick.
-        synthetic_email = f"{mobile.replace('+', '')}@manzil.local"
         resp = client.auth.admin.create_user(
             {
                 "email": synthetic_email,
@@ -333,11 +333,71 @@ def supabase_create_user(mobile: str, password: str, display_name: str) -> str |
         user = getattr(resp, "user", None) or getattr(resp, "data", None)
         if user and getattr(user, "id", None):
             return str(user.id)
-        # Some SDK versions return dict
         if isinstance(resp, dict) and resp.get("user"):
             return str(resp["user"].get("id"))
         return None
-    except Exception:
+    except Exception as e:
+        msg = str(e).lower()
+        # Duplicate phone/email – reuse existing auth user (Supabase messages vary: "already exists", "already registered", "already been registered")
+        if "already" in msg or "duplicate" in msg or "exists" in msg or "registered" in msg:
+            def _find_and_reuse(users_list):
+                if not users_list:
+                    return None
+                norm_mobile = mobile.replace("+", "").strip()
+                norm_synth = synthetic_email.lower()
+                for u in users_list:
+                    phone = getattr(u, "phone", None) if not isinstance(u, dict) else u.get("phone")
+                    email = getattr(u, "email", None) if not isinstance(u, dict) else u.get("email")
+                    uid = getattr(u, "id", None) if not isinstance(u, dict) else u.get("id")
+                    phone_norm = str(phone).replace("+", "").strip() if phone else ""
+                    email_norm = str(email).lower().strip() if email else ""
+                    if phone_norm == norm_mobile or email_norm == norm_synth:
+                        try:
+                            client.auth.admin.update_user_by_id(str(uid), {"password": password, "user_metadata": {"display_name": display_name, "mobile": mobile}})
+                        except Exception:
+                            pass
+                        return str(uid)
+                return None
+
+            # Try via Python client first
+            try:
+                listed = client.auth.admin.list_users()
+                users = getattr(listed, "users", None) or (listed.get("users") if isinstance(listed, dict) else None)
+                found = _find_and_reuse(users)
+                if found:
+                    return found
+            except Exception:
+                pass
+            # Fallback: direct GoTrue HTTP (python client's list_users is paginated/buggy locally)
+            try:
+                import json as _json
+                import urllib.request as _urllib
+
+                supabase_url = get_supabase_url()
+                service_key = _get_env("SUPABASE_SERVICE_ROLE_KEY")
+                if supabase_url and service_key:
+                    for page in (1, 2, 3):
+                        url = supabase_url.rstrip("/") + f"/auth/v1/admin/users?page={page}&per_page=100"
+                        req = _urllib.Request(url, headers={"apikey": service_key, "Authorization": f"Bearer {service_key}"})
+                        with _urllib.urlopen(req, timeout=5) as resp:
+                            data = _json.loads(resp.read().decode())
+                            http_users = data.get("users", []) if isinstance(data, dict) else []
+                            if not http_users:
+                                break
+                            found = _find_and_reuse(http_users)
+                            if found:
+                                return found
+                            if len(http_users) < 100:
+                                break
+            except Exception:
+                pass
+        # Log for local debugging (do not leak to client)
+        try:
+            import logging
+
+            logging.getLogger(__name__).warning("supabase_create_user failed for %s: %s", mobile, e)
+        except Exception:
+            pass
         return None
 
 
