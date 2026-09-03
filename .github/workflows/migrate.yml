@@ -1,37 +1,17 @@
-name: Migrate DB
-
-on:
-  workflow_dispatch: # manual button only, no auto-run on push
-    inputs:
-      target:
-        description: "Where to migrate"
-        type: choice
-        default: staging
-        options: [staging, production]
-
 jobs:
   migrate:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target }} # ties to GitHub Environment `staging`/`production`
+    environment: ${{ inputs.target }}
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Fetch full history to ensure all files are available
-          ref: main       # Explicitly check out main branch
-      
       - uses: astral-sh/setup-uv@v5
-
-      - name: Install deps
-        run: uv sync --frozen --project backend
-
-      - name: Run migrations
-        run: uv run --project backend alembic upgrade head
-        working-directory: backend
+      - run: uv sync --frozen
+      - run: uv run alembic upgrade head
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      
-      - name: Show current version
-        run: uv run --project backend alembic current
-        working-directory: backend
+      - run: uv run alembic current
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
