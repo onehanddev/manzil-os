@@ -1,3 +1,14 @@
+name: Migrate DB
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to migrate"
+        type: choice
+        default: staging
+        options: [staging, production]
+
 jobs:
   migrate:
     runs-on: ubuntu-latest
@@ -9,9 +20,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --frozen
-      - run: uv run alembic upgrade head
+      - name: Run migrations
+        run: uv run alembic upgrade head
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      - run: uv run alembic current
+      - name: Show version
+        run: uv run alembic current
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
