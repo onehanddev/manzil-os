@@ -42,14 +42,47 @@ describe('LoginPage', () => {
     expect(globalThis.fetch).not.toHaveBeenCalledWith(expect.stringContaining('/auth/otp/send'), expect.anything())
   })
 
-  it('enters demo mode and stores an auth session', async () => {
+  it('shows an error when credentials are invalid', async () => {
     const user = userEvent.setup()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Invalid credentials' }), { status: 401 }),
+    )
+
     renderWithProviders(<LoginPage />, { route: '/login' })
 
     await user.type(screen.getByLabelText('Mobile number'), '+91 90000 00000')
-    await user.click(screen.getByRole('button', { name: 'Continue in demo mode' }))
+    await user.type(screen.getByLabelText('Password'), 'wrong-password')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
 
-    await waitFor(() => expect(useAuthStore.getState().accessToken).toBe('demo-token'))
-    expect(useAuthStore.getState().user?.displayName).toBe('Dev User')
+    await waitFor(() => expect(screen.getByText('Invalid credentials')).toBeInTheDocument())
+    expect(useAuthStore.getState().accessToken).toBeNull()
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/auth/login'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('stores the authenticated user returned by the me endpoint', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'real-token', token_type: 'bearer', status: 'active' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ user_id: 'user-42', mobile: '+919000000042' }), { status: 200 }),
+      )
+
+    renderWithProviders(<LoginPage />, { route: '/login' })
+
+    await user.type(screen.getByLabelText('Mobile number'), '+91 90000 00042')
+    await user.type(screen.getByLabelText('Password'), 'admin123')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(useAuthStore.getState().accessToken).toBe('real-token'))
+    expect(useAuthStore.getState().user).toEqual({
+      id: 'user-42',
+      displayName: '+919000000042',
+      mobile: '+919000000042',
+    })
   })
 })

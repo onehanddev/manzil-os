@@ -124,7 +124,7 @@ export function AppShell() {
       // ignore
     }
     const token = useAuthStore.getState().accessToken
-    if (token && token !== 'demo-token') {
+    if (token) {
       try {
         await api.post('/auth/logout')
       } catch {
